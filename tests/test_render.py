@@ -130,6 +130,23 @@ class RenderTests(unittest.TestCase):
         self.assertNotIn("orphaned", text)
         self.assertNotIn("pid_missing", text)
 
+    def test_compact_handles_status_without_run_name(self):
+        statuses = [
+            TrainingStatus(
+                pid=12345,
+                gpu_index=1,
+                run_name=None,
+                phase="unknown",
+                state="unbound",
+                state_reason="gpu_process_only",
+            )
+        ]
+        text = render_text(snapshot_with_gpus(4), statuses=statuses, width=100, height=18, display_mode="compact")
+        self.assertIn("GPU", text)
+        self.assertIn("unbound", text)
+        for line in text.splitlines():
+            self.assertLessEqual(cell_len(line), 100)
+
     def test_micro_ascii_tiles_avoid_unicode(self):
         text = render_text(snapshot_with_gpus(4), width=160, height=10, ascii_only=True, display_mode="micro")
         for index in range(4):

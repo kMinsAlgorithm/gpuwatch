@@ -962,7 +962,7 @@ def _compact_gpu_table(
             f"{mb(gpu.memory_used_mb)}/{mb(gpu.memory_total_mb)}",
             na(gpu.temperature_c, "C"),
             _pid_label(gpu.processes),
-            clamp_text(status.run_name if status else "-", 18),
+            clamp_text((status.run_name or "-") if status else "-", 18),
             percent(status.process_progress_percent if status else None) if status else "-",
             seconds(status.eta_seconds) if status and status.eta_seconds is not None else "-",
         )
