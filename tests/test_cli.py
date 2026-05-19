@@ -5,6 +5,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from gpuwatch.cli import _normalize_argv
+
 
 class CliTests(unittest.TestCase):
     def run_cli(self, *args):
@@ -16,6 +18,20 @@ class CliTests(unittest.TestCase):
             stderr=subprocess.PIPE,
             check=True,
         )
+
+    def test_top_is_default_command(self):
+        self.assertEqual(_normalize_argv([]), ["top"])
+        self.assertEqual(_normalize_argv(["--interval", "0.5"]), ["top", "--interval", "0.5"])
+        self.assertEqual(
+            _normalize_argv(["--backend", "fake", "--plain"]),
+            ["top", "--backend", "fake", "--plain"],
+        )
+        self.assertEqual(
+            _normalize_argv(["top", "--interval", "0.5"]),
+            ["top", "--interval", "0.5"],
+        )
+        self.assertEqual(_normalize_argv(["once", "--backend", "fake"]), ["once", "--backend", "fake"])
+        self.assertEqual(_normalize_argv(["--help"]), ["--help"])
 
     def test_once_json_filter_has_schema_and_training(self):
         result = self.run_cli("once", "--backend", "fake", "--gpu", "1", "--json")

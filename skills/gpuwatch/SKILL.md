@@ -13,7 +13,7 @@ Run read-only checks by default:
 
 ```bash
 python -m gpuwatch once
-python -m gpuwatch top --interval 0.25
+python -m gpuwatch
 python -m gpuwatch train-status --root /data/kmg/Trajectory_Prediction/related_works/My_MART_HIERAR_HRT_v2
 python -m gpuwatch doctor --root /data/kmg/Trajectory_Prediction/related_works/My_MART_HIERAR_HRT_v2
 ```
@@ -23,18 +23,20 @@ If NVML is unavailable in the current environment, use the deterministic fake ba
 ```bash
 python -m gpuwatch once --backend fake
 python -m gpuwatch once --backend fake --theme soft-dark
-python -m gpuwatch top --backend fake --plain --theme soft-dark
-python -m gpuwatch top --backend fake --plain --ascii --theme terminal
+python -m gpuwatch --backend fake --plain --theme soft-dark
+python -m gpuwatch --backend fake --plain --ascii --theme terminal
 ```
 
-The default theme is `soft-dark`. Wide and short terminals use `wide-short` run/GPU ribbons;
-narrow short terminals use square-ish GPU cards. Use `--mode micro|wide-short|compact|medium|full`
-to force a layout and `--explain-layout` when debugging why a layout was selected.
+`python -m gpuwatch` is shorthand for `python -m gpuwatch top --interval 0.25`; pass
+`--interval` directly to change the refresh rate. The default theme is `soft-dark`. Wide and
+short terminals use `wide-short` run/GPU ribbons; narrow short terminals use square-ish GPU
+cards. Use `--mode micro|wide-short|compact|medium|full` to force a layout and
+`--explain-layout` when debugging why a layout was selected.
 
 Useful filters:
 
 ```bash
-python -m gpuwatch top --gpu 0,3 --sort eta
+python -m gpuwatch --gpu 0,3 --sort eta
 python -m gpuwatch once --backend fake --gpu 1 --json
 python -m gpuwatch train-status --failed-only --explain
 ```

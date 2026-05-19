@@ -21,12 +21,23 @@ DEFAULT_INTERVAL = 0.25
 SCHEMA_VERSION = "0.2"
 SORT_CHOICES = ("index", "util", "vram", "temp", "mem", "age", "progress", "eta", "run")
 MODE_CHOICES = ("auto", "micro", "wide-short", "compact", "medium", "full")
+TOP_COMMAND = "top"
+COMMANDS = frozenset((TOP_COMMAND, "once", "json", "train-status", "doctor"))
 
 
 def main(argv: List[str] = None) -> int:
+    argv = _normalize_argv(sys.argv[1:] if argv is None else list(argv))
     parser = build_parser()
     args = parser.parse_args(argv)
     return args.func(args)
+
+
+def _normalize_argv(argv: List[str]) -> List[str]:
+    if not argv:
+        return [TOP_COMMAND]
+    if argv[0] in COMMANDS or argv[0] in ("-h", "--help"):
+        return argv
+    return [TOP_COMMAND, *argv]
 
 
 def build_parser() -> argparse.ArgumentParser:

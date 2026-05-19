@@ -83,13 +83,13 @@ gpuwatch doctor
 Run the full-screen TUI:
 
 ```bash
-gpuwatch top --interval 0.25
+gpuwatch
 ```
 
 Run the Rich plain live view instead of Textual:
 
 ```bash
-gpuwatch top --plain --interval 0.25
+gpuwatch --plain
 ```
 
 Print one snapshot:
@@ -102,7 +102,7 @@ Use the fake backend when NVML is unavailable:
 
 ```bash
 gpuwatch once --backend fake
-gpuwatch top --backend fake --plain
+gpuwatch --backend fake --plain
 ```
 
 Quit the TUI with `q`, `ctrl+c`, or `ctrl+q`.
@@ -111,21 +111,23 @@ Quit the TUI with `q`, `ctrl+c`, or `ctrl+q`.
 
 ### `gpuwatch top`
 
-Runs the live monitor.
+Runs the live monitor. `gpuwatch` without a subcommand is shorthand for
+`gpuwatch top --interval 0.25`, and top options can be passed directly.
 
 ```bash
-gpuwatch top [--backend auto|fake] [--interval 0.25] [--plain] [--no-training] [--ascii] [--theme soft-dark|terminal|light] [--mode auto|micro|wide-short|compact|medium|full] [--gpu 0,1] [--pid PID] [--user USER] [--cmd TEXT] [--state running,stalled] [--sort util|vram|age|progress|eta|run] [--reverse] [--root PATH]
+gpuwatch [--backend auto|fake] [--interval 0.25] [--plain] [--no-training] [--ascii] [--theme soft-dark|terminal|light] [--mode auto|micro|wide-short|compact|medium|full] [--gpu 0,1] [--pid PID] [--user USER] [--cmd TEXT] [--state running,stalled] [--sort util|vram|age|progress|eta|run] [--reverse] [--root PATH]
+gpuwatch top [same options]
 ```
 
 Useful examples:
 
 ```bash
-gpuwatch top --interval 0.25
-gpuwatch top --plain --interval 0.1
-gpuwatch top --backend fake --theme soft-dark
-gpuwatch top --ascii --theme terminal
-gpuwatch top --mode wide-short --explain-layout
-gpuwatch top --gpu 0,3 --sort eta
+gpuwatch
+gpuwatch --interval 0.1
+gpuwatch --backend fake --theme soft-dark
+gpuwatch --ascii --theme terminal
+gpuwatch --mode wide-short --explain-layout
+gpuwatch --gpu 0,3 --sort eta
 gpuwatch top --root /data/kmg/Trajectory_Prediction/related_works/My_MART_HIERAR_HRT_v2
 ```
 
@@ -198,22 +200,22 @@ as a separate `wide-short` mode, so a `204x8` pane shows run/GPU ribbons instead
 tiles.
 
 ```bash
-gpuwatch top --theme soft-dark
-gpuwatch top --theme terminal
-gpuwatch top --theme light
+gpuwatch --theme soft-dark
+gpuwatch --theme terminal
+gpuwatch --theme light
 ```
 
 Use `--ascii` if the terminal has trouble with Unicode borders:
 
 ```bash
-gpuwatch top --ascii --theme terminal
+gpuwatch --ascii --theme terminal
 ```
 
 Force a layout while debugging:
 
 ```bash
-gpuwatch top --mode micro
-gpuwatch top --mode full --explain-layout
+gpuwatch --mode micro
+gpuwatch --mode full --explain-layout
 ```
 
 Responsive screenshots for several terminal sizes live in
@@ -276,12 +278,12 @@ with TrainingRun("eth_seed1", total_epochs=100, gpu_index=3) as run:
     ...
 ```
 
-`gpuwatch top` and `gpuwatch train-status` can also infer progress from recent `.log` files
+`gpuwatch` and `gpuwatch train-status` can also infer progress from recent `.log` files
 under paths passed with `--root` or the `GPUWATCH_PROJECT_ROOTS` environment variable.
 
 ```bash
 export GPUWATCH_PROJECT_ROOTS=/path/to/project1:/path/to/project2
-gpuwatch top
+gpuwatch
 ```
 
 ## Development
@@ -324,5 +326,5 @@ make build
 - Real NVIDIA sampling requires a loaded NVIDIA driver. If `gpuwatch doctor` reports
   `NVML init failed: Driver Not Loaded`, use `--backend fake` for UI testing or fix the
   server driver/runtime first.
-- `gpuwatch top --plain` uses Rich live rendering. The default `gpuwatch top` uses Textual
+- `gpuwatch --plain` uses Rich live rendering. The default `gpuwatch` uses Textual
   and supports `q`, `ctrl+c`, and `ctrl+q` for clean exit.
