@@ -67,6 +67,30 @@ class TrainingStatusTests(unittest.TestCase):
             self.assertEqual(status.total_steps, 10)
             self.assertEqual(status.phase, "train")
 
+    def test_training_run_records_visible_gpu_hint(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            previous_run_dir = os.environ.get("GPUWATCH_RUN_DIR")
+            previous_visible = os.environ.get("CUDA_VISIBLE_DEVICES")
+            os.environ["GPUWATCH_RUN_DIR"] = tmp
+            os.environ["CUDA_VISIBLE_DEVICES"] = "3"
+            run = TrainingRun("gpu_hint", total_epochs=5, skill_dir=tmp)
+            try:
+                run.__enter__()
+                run.step(epoch=1, step=2, total_steps=10)
+                statuses = snapshot(project_roots=[])
+            finally:
+                run.__exit__(None, None, None)
+                if previous_run_dir is None:
+                    os.environ.pop("GPUWATCH_RUN_DIR", None)
+                else:
+                    os.environ["GPUWATCH_RUN_DIR"] = previous_run_dir
+                if previous_visible is None:
+                    os.environ.pop("CUDA_VISIBLE_DEVICES", None)
+                else:
+                    os.environ["CUDA_VISIBLE_DEVICES"] = previous_visible
+            self.assertTrue(statuses)
+            self.assertEqual(statuses[0].gpu_index, 3)
+
     def test_heartbeat_ignores_partial_json_lines(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "run_123.jsonl"
@@ -85,6 +109,16 @@ class TrainingStatusTests(unittest.TestCase):
             self.assertEqual(status.run_name, "partial")
             self.assertEqual(status.epoch, 4)
             self.assertEqual(status.step, 2)
+
+    def test_heartbeat_marks_missing_pid_orphaned(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "run_99999999.jsonl"
+            path.write_text(
+                '{"event": "step", "pid": 99999999, "run_name": "gone", "epoch": 4, "total_epochs": 9}\n',
+                encoding="utf-8",
+            )
+            status = _parse_heartbeat(path)
+            self.assertEqual(status.state, "orphaned")
 
 
 if __name__ == "__main__":

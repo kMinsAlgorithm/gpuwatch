@@ -53,6 +53,14 @@ with TrainingRun("eth_seed1", total_epochs=100) as run:
         run.epoch_end(epoch)
 ```
 
+`TrainingRun` auto-records a GPU hint from `CUDA_VISIBLE_DEVICES` when it is set. If a
+training script selects a device internally, pass the physical GPU explicitly:
+
+```python
+with TrainingRun("eth_seed1", total_epochs=100, gpu_index=3) as run:
+    ...
+```
+
 For existing trajectory experiments, `gpuwatch train-status --root ...` scans recent `.log` files and `run_*.jsonl` heartbeat files. It reports confidence and evidence; low-confidence rows should be treated as hints, not facts.
 
 See `references/log-status-patterns.md` only when updating parser behavior.

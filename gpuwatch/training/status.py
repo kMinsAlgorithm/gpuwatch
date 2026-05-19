@@ -260,6 +260,7 @@ def _parse_heartbeat(path: Path) -> TrainingStatus:
         raise json.JSONDecodeError("empty heartbeat", "", 0)
 
     event = latest.get("event", "unknown")
+    pid = _optional_int(_first_present(latest.get("pid"), start.get("pid")))
     epoch = _optional_int(latest.get("epoch"))
     max_epoch = _optional_int(latest.get("total_epochs") or start.get("total_epochs"))
     step = _optional_int(latest.get("step"))
@@ -274,8 +275,19 @@ def _parse_heartbeat(path: Path) -> TrainingStatus:
     progress = _progress_percent(epoch, max_epoch, step, total_steps, phase)
     last_time = float(latest.get("time", path.stat().st_mtime))
     stale = max(0.0, time.time() - last_time)
+    state = "stalled" if stale > 900 and phase not in ("complete", "failed") else phase
+    if pid is not None and phase not in ("complete", "failed") and not _pid_exists(pid):
+        state = "orphaned"
     return TrainingStatus(
-        pid=_optional_int(latest.get("pid") or start.get("pid")),
+        pid=pid,
+        gpu_index=_optional_int(
+            _first_present(
+                latest.get("gpu_index"),
+                start.get("gpu_index"),
+                _metadata_value(latest, "gpu_index"),
+                _metadata_value(start, "gpu_index"),
+            )
+        ),
         run_name=latest.get("run_name") or start.get("run_name") or path.stem,
         phase=phase,
         epoch=epoch,
@@ -286,7 +298,7 @@ def _parse_heartbeat(path: Path) -> TrainingStatus:
         val_ade=_optional_float(latest.get("val_ade") or latest.get("ade")),
         val_fde=_optional_float(latest.get("val_fde") or latest.get("fde")),
         score=_optional_float(latest.get("score")),
-        state="stalled" if stale > 900 and phase not in ("complete", "failed") else phase,
+        state=state,
         stale_seconds=stale,
         confidence=0.95,
         evidence=("heartbeat",),
@@ -399,6 +411,34 @@ def _tail_text(path: Path, max_bytes: int = 262144) -> str:
             handle.seek(size - max_bytes)
         data = handle.read()
     return data.decode("utf-8", errors="replace")
+
+
+def _first_present(*values):
+    for value in values:
+        if value is not None:
+            return value
+    return None
+
+
+def _metadata_value(record, key: str):
+    metadata = record.get("metadata") if isinstance(record, dict) else None
+    if isinstance(metadata, dict):
+        return metadata.get(key)
+    return None
+
+
+def _pid_exists(pid: Optional[int]) -> bool:
+    if pid is None:
+        return True
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return True
 
 
 def _optional_int(value) -> Optional[int]:

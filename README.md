@@ -240,6 +240,14 @@ with TrainingRun("eth_seed1", total_epochs=100) as run:
         run.epoch_end(epoch)
 ```
 
+`TrainingRun` records `CUDA_VISIBLE_DEVICES` as a GPU hint when it is set. You can also
+bind the heartbeat explicitly:
+
+```python
+with TrainingRun("eth_seed1", total_epochs=100, gpu_index=3) as run:
+    ...
+```
+
 `gpuwatch top` and `gpuwatch train-status` can also infer progress from recent `.log` files
 under paths passed with `--root` or the `GPUWATCH_PROJECT_ROOTS` environment variable.
 

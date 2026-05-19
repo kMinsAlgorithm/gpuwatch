@@ -90,6 +90,23 @@ class RenderTests(unittest.TestCase):
         for line in text.splitlines():
             self.assertLessEqual(cell_len(line), 80)
 
+    def test_micro_does_not_show_orphaned_training_as_active_epoch(self):
+        snapshot = snapshot_with_gpus(4)
+        statuses = [
+            TrainingStatus(
+                pid=99999999,
+                gpu_index=3,
+                run_name="gone",
+                phase="train",
+                epoch=4,
+                max_epoch=9,
+                process_progress_percent=44.0,
+                state="orphaned",
+            )
+        ]
+        text = render_text(snapshot, statuses=statuses, width=204, height=8, ascii_only=False)
+        self.assertNotIn("E 4/9/44%", text)
+
     def test_micro_ascii_tiles_avoid_unicode(self):
         text = render_text(snapshot_with_gpus(4), width=160, height=10, ascii_only=True)
         for index in range(4):

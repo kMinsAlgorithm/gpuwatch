@@ -497,7 +497,7 @@ def _select_micro_gpus(gpus: List[object], statuses: List[TrainingStatus], max_t
 
 
 def _gpu_interest(gpu, statuses: List[TrainingStatus]) -> float:
-    gpu_statuses = [status for status in statuses if status.gpu_index == gpu.index]
+    gpu_statuses = _active_training_statuses([status for status in statuses if status.gpu_index == gpu.index])
     score = float(_gpu_health(gpu, gpu_statuses).priority)
     if gpu_statuses:
         score += 100.0
@@ -511,7 +511,7 @@ def _gpu_interest(gpu, statuses: List[TrainingStatus]) -> float:
 
 
 def _gpu_block(gpu, statuses: List[TrainingStatus], tile_width: int, glyphs: RenderGlyphs, theme: RenderTheme) -> Text:
-    gpu_statuses = [status for status in statuses if status.gpu_index == gpu.index]
+    gpu_statuses = _active_training_statuses([status for status in statuses if status.gpu_index == gpu.index])
     health = _gpu_health(gpu, gpu_statuses)
     train = _tile_training_label(gpu_statuses)
     pid = _pid_label(gpu.processes)
@@ -962,7 +962,7 @@ def _pid_label(processes: Iterable[GpuProcessSnapshot]) -> str:
 
 
 def _gpu_training_label(gpu_index: int, statuses: List[TrainingStatus]) -> str:
-    gpu_statuses = [status for status in statuses if status.gpu_index == gpu_index]
+    gpu_statuses = _active_training_statuses([status for status in statuses if status.gpu_index == gpu_index])
     if not gpu_statuses:
         return "-"
     labels = [status.compact_label() for status in gpu_statuses[:2]]
@@ -972,6 +972,7 @@ def _gpu_training_label(gpu_index: int, statuses: List[TrainingStatus]) -> str:
 
 
 def _tile_training_label(statuses: List[TrainingStatus]) -> str:
+    statuses = _active_training_statuses(statuses)
     if not statuses:
         return ""
     status = statuses[0]
@@ -981,6 +982,11 @@ def _tile_training_label(statuses: List[TrainingStatus]) -> str:
     if len(statuses) > 1:
         label += f"+{len(statuses) - 1}"
     return f"E{label}"
+
+
+def _active_training_statuses(statuses: List[TrainingStatus]) -> List[TrainingStatus]:
+    inactive = {"complete", "failed", "orphaned"}
+    return [status for status in statuses if (status.state or "").lower() not in inactive]
 
 
 def short_gpu_name(name: str) -> str:
