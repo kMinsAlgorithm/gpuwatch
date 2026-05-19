@@ -161,34 +161,35 @@ def render_dashboard(
     explain_layout: bool = False,
 ) -> Group:
     status_list = list(training_statuses)
+    dashboard_statuses = _dashboard_training_statuses(status_list)
     decision = _layout_decision(width, height, display_mode)
     mode = decision.mode
     glyphs = ASCII_GLYPHS if ascii_only else UNICODE_GLYPHS
     render_theme = _resolve_theme(theme)
     if mode == "micro":
-        out = _micro_dashboard(snapshot, status_list, include_training, width, height, glyphs, render_theme)
+        out = _micro_dashboard(snapshot, dashboard_statuses, include_training, width, height, glyphs, render_theme)
         return _with_layout_explain(out, decision, width, render_theme, explain_layout)
     if mode == "wide-short":
-        out = _wide_short_dashboard(snapshot, status_list, include_training, width, height, glyphs, render_theme)
+        out = _wide_short_dashboard(snapshot, dashboard_statuses, include_training, width, height, glyphs, render_theme)
         return _with_layout_explain(out, decision, width, render_theme, explain_layout)
     if mode == "compact":
-        out = _compact_dashboard(snapshot, status_list, include_training, width, height, glyphs, render_theme)
+        out = _compact_dashboard(snapshot, dashboard_statuses, include_training, width, height, glyphs, render_theme)
         return _with_layout_explain(out, decision, width, render_theme, explain_layout)
     if mode == "medium":
-        out = _medium_dashboard(snapshot, status_list, include_training, width, height, glyphs, render_theme)
+        out = _medium_dashboard(snapshot, dashboard_statuses, include_training, width, height, glyphs, render_theme)
         return _with_layout_explain(out, decision, width, render_theme, explain_layout)
 
-    training_by_pid = {status.pid: status for status in status_list if status.pid is not None}
+    training_by_pid = {status.pid: status for status in dashboard_statuses if status.pid is not None}
     process_rows = _row_budget(height, reserved=12 if include_training else 8, fallback=12)
     training_rows = _row_budget(height, reserved=14, fallback=8)
     renderables = [
         _host_panel(snapshot, render_theme),
     ]
     if include_training:
-        renderables.append(_training_table(status_list, max_rows=training_rows, theme=render_theme))
+        renderables.append(_training_table(dashboard_statuses, max_rows=training_rows, theme=render_theme))
     renderables.extend(
         [
-            _gpu_table(snapshot, statuses=status_list, max_rows=_row_budget(height, reserved=10, fallback=64), theme=render_theme),
+            _gpu_table(snapshot, statuses=dashboard_statuses, max_rows=_row_budget(height, reserved=10, fallback=64), theme=render_theme),
             _process_table(
                 snapshot,
                 training_by_pid,
@@ -1212,6 +1213,11 @@ def _tile_training_label(statuses: List[TrainingStatus]) -> str:
 def _active_training_statuses(statuses: List[TrainingStatus]) -> List[TrainingStatus]:
     inactive = {"complete", "failed", "orphaned"}
     return [status for status in statuses if (status.state or "").lower() not in inactive]
+
+
+def _dashboard_training_statuses(statuses: List[TrainingStatus]) -> List[TrainingStatus]:
+    hidden = {"complete", "orphaned"}
+    return [status for status in statuses if (status.state or "").lower() not in hidden]
 
 
 def _health_training_statuses(statuses: List[TrainingStatus]) -> List[TrainingStatus]:

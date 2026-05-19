@@ -109,7 +109,7 @@ class RenderTests(unittest.TestCase):
         text = render_text(snapshot, statuses=statuses, width=204, height=8, ascii_only=False)
         self.assertNotIn("E 4/9/44%", text)
 
-    def test_mini_training_table_shows_orphaned_state_reason(self):
+    def test_dashboard_hides_orphaned_training_history(self):
         statuses = [
             TrainingStatus(
                 pid=99999999,
@@ -126,9 +126,9 @@ class RenderTests(unittest.TestCase):
             )
         ]
         text = render_text(snapshot_with_gpus(4), statuses=statuses, width=160, height=28, ascii_only=False)
-        self.assertIn("State", text)
-        self.assertIn("orphaned", text)
-        self.assertIn("pid_missing", text)
+        self.assertNotIn("old_heartbeat", text)
+        self.assertNotIn("orphaned", text)
+        self.assertNotIn("pid_missing", text)
 
     def test_micro_ascii_tiles_avoid_unicode(self):
         text = render_text(snapshot_with_gpus(4), width=160, height=10, ascii_only=True, display_mode="micro")
