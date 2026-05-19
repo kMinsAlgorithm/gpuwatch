@@ -1,0 +1,6 @@
+include README.md
+include Makefile
+recursive-include docs *.md *.svg
+recursive-include skills *.md
+recursive-include tests *.py
+recursive-include tools *.py

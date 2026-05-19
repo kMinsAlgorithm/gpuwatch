@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gpuwatch"
+version = "0.1.0"
+description = "Responsive GPU and training progress monitor for terminal workflows"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [
+  { name = "gpuwatch contributors" },
+]
+keywords = ["gpu", "nvidia", "nvml", "terminal", "training", "monitoring"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Science/Research",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Topic :: System :: Monitoring",
+]
+dependencies = [
+  "psutil>=5.9",
+  "rich>=13",
+  "nvidia-ml-py>=12",
+]
+
+[project.optional-dependencies]
+tui = ["textual>=0.79"]
+dev = ["build>=1.2", "pytest>=7", "ruff>=0.5"]
+
+[project.scripts]
+gpuwatch = "gpuwatch.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["gpuwatch*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+  "real_nvml: requires an NVIDIA driver and NVML runtime",
+]

@@ -1,0 +1,292 @@
+# gpuwatch
+
+`gpuwatch` is a responsive terminal GPU monitor for NVIDIA training servers. It is meant to
+replace aliases such as:
+
+```bash
+watch -n 0.1 nvidia-smi
+```
+
+The UI adapts to terminal size. Short terminals show square-ish GPU blocks, medium terminals
+show compact process cards, and large terminals show GPU, process, and training-progress
+tables. The default theme is `soft-dark`.
+
+![gpuwatch 204x8](docs/screenshots/01-wide-short-204x8.svg)
+
+## Features
+
+- NVIDIA GPU sampling through NVML with a fake backend for local UI development.
+- Per-GPU utilization, VRAM, temperature, fan, power, PID, and process information.
+- Host CPU, RAM, and load average summary.
+- Responsive Rich/Textual UI with `soft-dark`, `terminal`, and `light` themes.
+- ASCII fallback for terminals that do not render Unicode box characters well.
+- Training progress detection from `TrainingRun` heartbeat files and recent `.log` files.
+- JSON output for scripting and dashboards.
+
+## Repository Layout
+
+```text
+gpuwatch/
+  gpuwatch/               Python package
+    backends/             NVML, fake GPU, and host samplers
+    render/               Rich/Textual rendering code
+    training/             Training heartbeat and log status parsing
+  tests/                  Unit tests for sampling, rendering, and training status
+  tools/                  Developer utilities
+  docs/screenshots/       Responsive SVG screenshots
+  docs/REPOSITORY.md      Repository maintenance notes
+  skills/gpuwatch/        Codex skill/manual for local GPU inspection workflows
+  pyproject.toml          Build metadata and dependencies
+```
+
+## Requirements
+
+- Python 3.9 or newer.
+- `psutil`, `rich`, and `nvidia-ml-py`.
+- NVIDIA driver and NVML runtime for real GPU sampling.
+- `textual` for the full-screen TUI. It is included in the `tui` extra.
+
+The fake backend works without NVIDIA hardware and is useful for testing the UI.
+
+## Installation
+
+For normal local development:
+
+```bash
+cd /home/kmg/gpuwatch
+python3 -m pip install -e ".[tui,dev]"
+```
+
+For a minimal CLI-only install:
+
+```bash
+python3 -m pip install -e .
+```
+
+For a wheel/sdist build:
+
+```bash
+python3 -m pip install build
+python3 -m build
+```
+
+Build artifacts are written to `dist/`.
+
+## Quick Start
+
+Check runtime dependencies and NVML availability:
+
+```bash
+gpuwatch doctor
+```
+
+Run the full-screen TUI:
+
+```bash
+gpuwatch top --interval 0.25
+```
+
+Run the Rich plain live view instead of Textual:
+
+```bash
+gpuwatch top --plain --interval 0.25
+```
+
+Print one snapshot:
+
+```bash
+gpuwatch once
+```
+
+Use the fake backend when NVML is unavailable:
+
+```bash
+gpuwatch once --backend fake
+gpuwatch top --backend fake --plain
+```
+
+Quit the TUI with `q`, `ctrl+c`, or `ctrl+q`.
+
+## CLI Reference
+
+### `gpuwatch top`
+
+Runs the live monitor.
+
+```bash
+gpuwatch top [--backend auto|fake] [--interval 0.25] [--plain] [--no-training] [--ascii] [--theme soft-dark|terminal|light] [--root PATH]
+```
+
+Useful examples:
+
+```bash
+gpuwatch top --interval 0.25
+gpuwatch top --plain --interval 0.1
+gpuwatch top --backend fake --theme soft-dark
+gpuwatch top --ascii --theme terminal
+gpuwatch top --root /data/kmg/Trajectory_Prediction/related_works/My_MART_HIERAR_HRT_v2
+```
+
+### `gpuwatch once`
+
+Prints a single snapshot.
+
+```bash
+gpuwatch once [--backend auto|fake] [--json] [--no-training] [--ascii] [--theme soft-dark|terminal|light] [--root PATH]
+```
+
+Examples:
+
+```bash
+gpuwatch once
+gpuwatch once --backend fake --theme light
+gpuwatch once --json
+```
+
+### `gpuwatch json`
+
+Emits JSON snapshots for scripts.
+
+```bash
+gpuwatch json [--backend auto|fake] [--watch] [--interval 1.0] [--limit N]
+```
+
+Examples:
+
+```bash
+gpuwatch json
+gpuwatch json --watch --interval 1.0 --limit 10
+```
+
+### `gpuwatch train-status`
+
+Scans training heartbeats and recent logs.
+
+```bash
+gpuwatch train-status --root PATH [--backend auto|fake] [--json]
+```
+
+Example:
+
+```bash
+gpuwatch train-status --root /data/kmg/Trajectory_Prediction/related_works/My_MART_HIERAR_HRT_v2
+```
+
+### `gpuwatch doctor`
+
+Checks Python dependencies and NVML availability.
+
+```bash
+gpuwatch doctor
+```
+
+## Themes And Responsive Layout
+
+The default theme is `soft-dark`.
+
+```bash
+gpuwatch top --theme soft-dark
+gpuwatch top --theme terminal
+gpuwatch top --theme light
+```
+
+Use `--ascii` if the terminal has trouble with Unicode borders:
+
+```bash
+gpuwatch top --ascii --theme terminal
+```
+
+Responsive screenshots for several terminal sizes live in
+[`docs/screenshots`](docs/screenshots/README.md). Regenerate them with:
+
+```bash
+python3 tools/generate_screenshots.py
+```
+
+## Python API
+
+Collect one system snapshot:
+
+```python
+from gpuwatch import sample_once
+
+snapshot = sample_once(backend="auto")
+for gpu in snapshot.gpus:
+    print(gpu.index, gpu.name, gpu.utilization_gpu_percent, gpu.memory_used_mb)
+```
+
+Stream snapshots:
+
+```python
+from gpuwatch import watch
+
+for snapshot in watch(interval=1.0, backend="auto", limit=5):
+    print(snapshot.timestamp, len(snapshot.gpus))
+```
+
+## Training Progress Instrumentation
+
+For new training scripts, add `TrainingRun` heartbeat instrumentation:
+
+```python
+from gpuwatch import TrainingRun
+
+with TrainingRun("eth_seed1", total_epochs=100) as run:
+    for epoch in range(100):
+        run.epoch_start(epoch, total_steps=len(loader))
+        for step, batch in enumerate(loader, start=1):
+            loss = train_step(batch)
+            run.step(epoch, step, total_steps=len(loader), loss=float(loss))
+        run.epoch_end(epoch)
+```
+
+`gpuwatch top` and `gpuwatch train-status` can also infer progress from recent `.log` files
+under paths passed with `--root` or the `GPUWATCH_PROJECT_ROOTS` environment variable.
+
+```bash
+export GPUWATCH_PROJECT_ROOTS=/path/to/project1:/path/to/project2
+gpuwatch top
+```
+
+## Development
+
+Run tests:
+
+```bash
+python3 -m unittest discover -s tests -v
+```
+
+Compile-check the package and tools:
+
+```bash
+python3 -m compileall -q gpuwatch tests tools
+```
+
+Regenerate screenshots:
+
+```bash
+python3 tools/generate_screenshots.py
+```
+
+Build distributions:
+
+```bash
+python3 -m build
+```
+
+The same common commands are available through `make`:
+
+```bash
+make install-dev
+make test
+make screenshots
+make build
+```
+
+## Notes
+
+- Real NVIDIA sampling requires a loaded NVIDIA driver. If `gpuwatch doctor` reports
+  `NVML init failed: Driver Not Loaded`, use `--backend fake` for UI testing or fix the
+  server driver/runtime first.
+- `gpuwatch top --plain` uses Rich live rendering. The default `gpuwatch top` uses Textual
+  and supports `q`, `ctrl+c`, and `ctrl+q` for clean exit.
