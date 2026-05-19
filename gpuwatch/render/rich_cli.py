@@ -953,24 +953,26 @@ def _micro_training_table(statuses: List[TrainingStatus], max_rows: int, theme: 
     table.add_column("GPU", no_wrap=True, justify="right")
     table.add_column("PID", no_wrap=True, justify="right")
     table.add_column("Run", no_wrap=True)
+    table.add_column("State", no_wrap=True)
     table.add_column("Epoch", no_wrap=True)
     table.add_column("Progress", no_wrap=True)
     table.add_column("ETA", no_wrap=True)
     table.add_column("HB", no_wrap=True)
-    table.add_column("Phase", no_wrap=True)
+    table.add_column("Reason", no_wrap=True)
     for status in statuses[:max_rows]:
         table.add_row(
             str(status.gpu_index) if status.gpu_index is not None else "-",
             str(status.pid) if status.pid is not None else "-",
             clamp_text(status.run_name or "-", 24),
+            status.state,
             status.epoch_label(),
             percent(status.process_progress_percent),
             seconds(status.eta_seconds) if status.eta_seconds is not None else "-",
             seconds(status.age_seconds if status.age_seconds is not None else status.stale_seconds),
-            status.phase,
+            status.state_reason or status.phase,
         )
     if len(statuses) > max_rows:
-        table.add_row("...", f"+{len(statuses) - max_rows}", "", "", "", "", "", "")
+        table.add_row("...", f"+{len(statuses) - max_rows}", "", "", "", "", "", "", "")
     return table
 
 
