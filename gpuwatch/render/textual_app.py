@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Iterable
 
+from rich.text import Text
+
 from gpuwatch.render.rich_cli import THEMES, render_dashboard
 from gpuwatch.sampler import sample_once
 from gpuwatch.training.status import snapshot as training_snapshot
@@ -24,7 +26,7 @@ def run_textual(
         from textual.binding import Binding
         from textual.containers import Container
         from textual.reactive import reactive
-        from textual.widgets import Footer, Static
+        from textual.widgets import Static
     except Exception as exc:
         raise RuntimeError("Textual is not installed. Install gpuwatch[tui] or use --plain.") from exc
 
@@ -33,7 +35,6 @@ def run_textual(
     css_background = render_theme.background or "#000000"
     css_surface = render_theme.surface or css_background
     css_surface_alt = render_theme.surface_alt or css_surface
-    css_border = render_theme.border or css_surface_alt
     css_text = render_theme.text or "#ffffff"
     css_muted = render_theme.muted or css_text
     css_warn = render_theme.warn or css_text
@@ -83,42 +84,11 @@ def run_textual(
             background: {css_background};
             color: {css_text};
         }}
-        Footer {{
+        ControlFooter {{
+            dock: bottom;
+            height: 1;
+            width: 100%;
             background: {css_background};
-            color: {css_text};
-        }}
-        Footer .footer--key {{
-            background: {css_background};
-            color: {css_warn};
-            text-style: bold;
-        }}
-        Footer .footer--description {{
-            background: {css_background};
-            color: {css_text};
-        }}
-        Footer .footer--highlight {{
-            background: {css_surface_alt};
-            color: {css_text};
-        }}
-        Footer .footer--highlight-key {{
-            background: {css_surface_alt};
-            color: {css_warn};
-            text-style: bold;
-        }}
-        Footer .footer--separator {{
-            background: {css_background};
-            color: {css_border};
-        }}
-        Footer .footer--disabled {{
-            background: {css_background};
-            color: {css_muted};
-        }}
-        Footer .footer--highlight-disabled {{
-            background: {css_surface_alt};
-            color: {css_muted};
-        }}
-        Footer .footer--highlight-description {{
-            background: {css_surface_alt};
             color: {css_text};
         }}
         """
@@ -134,7 +104,7 @@ def run_textual(
         def compose(self) -> ComposeResult:
             with Container(id="root"):
                 yield Dashboard()
-            yield Footer()
+            yield ControlFooter()
 
         def on_mount(self) -> None:
             self.set_interval(interval, self.refresh_dashboard)
@@ -145,6 +115,19 @@ def run_textual(
 
         def action_toggle_pause(self) -> None:
             self.paused = not self.paused
+            self.query_one(ControlFooter).refresh()
+
+    class ControlFooter(Static):
+        def render(self):
+            paused = bool(getattr(self.app, "paused", False))
+            line = Text(style=f"{css_text} on {css_background}")
+            line.append(" q ", style=f"bold {css_warn} on {css_surface_alt}")
+            line.append("Quit  ", style=f"{css_text} on {css_background}")
+            line.append(" p ", style=f"bold {css_warn} on {css_surface_alt}")
+            line.append("Resume" if paused else "Pause", style=f"{css_text} on {css_background}")
+            if paused:
+                line.append("  paused", style=f"{css_muted} on {css_background}")
+            return line
 
     try:
         GpuwatchApp().run()

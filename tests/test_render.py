@@ -168,9 +168,10 @@ class RenderTests(unittest.TestCase):
     def test_soft_dark_theme_has_background_styles(self):
         theme = THEMES["soft-dark"]
         self.assertEqual(theme.background, "#111827")
-        self.assertEqual(theme.surface_alt, "#222831")
+        self.assertEqual(theme.surface_alt, "#243244")
         self.assertIn("on #111827", theme.bg_style)
         self.assertIn("on #1f2937", theme.surface_style)
+        self.assertIn("on #243244", theme.alt_style)
 
     def test_health_badges_cover_busy_hot_warn_crit_idle(self):
         snapshot = snapshot_with_gpus(5)

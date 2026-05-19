@@ -105,7 +105,7 @@ THEMES = {
         name="soft-dark",
         background="#111827",
         surface="#1f2937",
-        surface_alt="#222831",
+        surface_alt="#243244",
         border="#475569",
         text="#e5e7eb",
         muted="#94a3b8",
@@ -368,6 +368,13 @@ def _screen_group(
 
 def _blank_line(width: Optional[int], theme: RenderTheme) -> Text:
     return Text(" " * max(1, width or 80), style=theme.bg_style)
+
+
+def _pad_line(line: Text, width: Optional[int], theme: RenderTheme, bg: Optional[str] = None) -> Text:
+    target_width = max(1, width or cell_len(line.plain) or 80)
+    if cell_len(line.plain) < target_width:
+        line.append(" " * (target_width - cell_len(line.plain)), style=_style(theme.text, bg or theme.background))
+    return line
 
 
 def _resolve_theme(name: str) -> RenderTheme:
@@ -634,27 +641,33 @@ def _micro_gpu_blocks(
     max_rows: int,
     glyphs: RenderGlyphs,
     theme: RenderTheme,
-) -> Table:
-    table = Table.grid(padding=(0, TILE_SPEC.gap_width))
-    table.style = theme.bg_style
+) -> Group:
     gpus = list(snapshot.gpus)
     columns, tile_width = _tile_layout(len(gpus), width)
-    for _ in range(columns):
-        table.add_column(width=tile_width, no_wrap=True, overflow="crop")
 
     max_tiles = max(1, columns * max(1, max_rows))
     visible, overflow_count = _select_micro_gpus(gpus, statuses, max_tiles)
-    tiles = [_gpu_block(gpu, statuses, tile_width, glyphs, theme) for gpu in visible]
+    tiles = [_gpu_block_lines(gpu, statuses, tile_width, glyphs, theme) for gpu in visible]
     if overflow_count:
-        tiles.append(_overflow_block(overflow_count, tile_width, glyphs, theme))
+        tiles.append(_overflow_block_lines(overflow_count, tile_width, glyphs, theme))
 
+    rows: List[Text] = []
+    target_width = max(1, width or 80)
     for start in range(0, len(tiles), columns):
-        row = tiles[start : start + columns]
-        row.extend("" for _ in range(columns - len(row)))
-        table.add_row(*row)
+        tile_row = tiles[start : start + columns]
+        for line_index in range(TILE_SPEC.height):
+            line = Text(style=theme.bg_style)
+            for column_index in range(columns):
+                if column_index:
+                    line.append(" " * TILE_SPEC.gap_width, style=theme.bg_style)
+                if column_index < len(tile_row):
+                    line.append_text(tile_row[column_index][line_index])
+                else:
+                    line.append(" " * tile_width, style=theme.bg_style)
+            rows.append(_pad_line(line, target_width, theme))
     if not gpus:
-        table.add_row(_styled_line("No GPU data", tile_width, theme, "muted"))
-    return table
+        rows.append(_styled_line("No GPU data", target_width, theme, "muted"))
+    return Group(*rows)
 
 
 def _select_micro_gpus(gpus: List[object], statuses: List[TrainingStatus], max_tiles: int) -> tuple[List[object], int]:
@@ -682,6 +695,10 @@ def _gpu_interest(gpu, statuses: List[TrainingStatus]) -> float:
 
 
 def _gpu_block(gpu, statuses: List[TrainingStatus], tile_width: int, glyphs: RenderGlyphs, theme: RenderTheme) -> Text:
+    return Text.assemble(*_interleave_lines(_gpu_block_lines(gpu, statuses, tile_width, glyphs, theme)))
+
+
+def _gpu_block_lines(gpu, statuses: List[TrainingStatus], tile_width: int, glyphs: RenderGlyphs, theme: RenderTheme) -> List[Text]:
     all_gpu_statuses = [status for status in statuses if status.gpu_index == gpu.index]
     health = _gpu_health(gpu, _health_training_statuses(all_gpu_statuses))
     train = _tile_training_label(all_gpu_statuses)
@@ -713,15 +730,28 @@ def _gpu_block(gpu, statuses: List[TrainingStatus], tile_width: int, glyphs: Ren
         theme,
     )
     line3 = _card_bottom(line3_content, tile_width, glyphs, theme)
-    return Text.assemble(line1, "\n", line2, "\n", line3)
+    return [line1, line2, line3]
 
 
 def _overflow_block(hidden: int, tile_width: int, glyphs: RenderGlyphs, theme: RenderTheme) -> Text:
+    return Text.assemble(*_interleave_lines(_overflow_block_lines(hidden, tile_width, glyphs, theme)))
+
+
+def _overflow_block_lines(hidden: int, tile_width: int, glyphs: RenderGlyphs, theme: RenderTheme) -> List[Text]:
     health = GpuHealth("MORE", 0, "muted")
     line1 = _card_top(f"+{hidden} GPUs", tile_width, glyphs, theme, health)
     line2 = _card_body("hidden by terminal size", tile_width, glyphs, theme, alt=False)
     line3 = _card_bottom("", tile_width, glyphs, theme)
-    return Text.assemble(line1, "\n", line2, "\n", line3)
+    return [line1, line2, line3]
+
+
+def _interleave_lines(lines: List[Text]) -> List[object]:
+    out: List[object] = []
+    for index, line in enumerate(lines):
+        if index:
+            out.append("\n")
+        out.append(line)
+    return out
 
 
 def _gpu_health(gpu, statuses: List[TrainingStatus]) -> GpuHealth:
@@ -908,6 +938,7 @@ def _compact_gpu_table(
         pad_edge=False,
         style=theme.surface_style,
         header_style=_style(theme.text, theme.surface_alt, "bold"),
+        row_styles=[theme.surface_style],
     )
     table.add_column("GPU", no_wrap=True, justify="right")
     table.add_column("State", no_wrap=True)
@@ -950,6 +981,7 @@ def _micro_training_table(statuses: List[TrainingStatus], max_rows: int, theme: 
         pad_edge=False,
         style=theme.surface_style,
         header_style=_style(theme.text, theme.surface_alt, "bold"),
+        row_styles=[theme.surface_style],
     )
     table.add_column("GPU", no_wrap=True, justify="right")
     table.add_column("PID", no_wrap=True, justify="right")
@@ -1007,6 +1039,7 @@ def _gpu_table(
         style=theme.surface_style,
         header_style=_style(theme.text, theme.surface_alt, "bold"),
         border_style=theme.border_style,
+        row_styles=[theme.surface_style],
     )
     table.add_column("GPU", no_wrap=True, justify="right")
     table.add_column("State", no_wrap=True)
@@ -1057,6 +1090,7 @@ def _process_table(
         style=theme.surface_style,
         header_style=_style(theme.text, theme.surface_alt, "bold"),
         border_style=theme.border_style,
+        row_styles=[theme.surface_style],
     )
     table.add_column("GPU", no_wrap=True, justify="right")
     table.add_column("PID", no_wrap=True, justify="right")
@@ -1105,6 +1139,7 @@ def _training_table(
         style=theme.surface_style,
         header_style=_style(theme.text, theme.surface_alt, "bold"),
         border_style=theme.border_style,
+        row_styles=[theme.surface_style],
     )
     table.add_column("GPU", no_wrap=True, justify="right")
     table.add_column("PID", no_wrap=True, justify="right")
