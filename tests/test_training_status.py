@@ -91,6 +91,32 @@ class TrainingStatusTests(unittest.TestCase):
             self.assertTrue(statuses)
             self.assertEqual(statuses[0].gpu_index, 3)
 
+    def test_training_run_records_ddp_rank_gpu_mapping(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            previous = {key: os.environ.get(key) for key in ("GPUWATCH_RUN_DIR", "CUDA_VISIBLE_DEVICES", "LOCAL_RANK", "RANK", "WORLD_SIZE")}
+            os.environ["GPUWATCH_RUN_DIR"] = tmp
+            os.environ["CUDA_VISIBLE_DEVICES"] = "2,3"
+            os.environ["LOCAL_RANK"] = "1"
+            os.environ["RANK"] = "5"
+            os.environ["WORLD_SIZE"] = "8"
+            run = TrainingRun("ddp_hint", total_epochs=5, skill_dir=tmp, project="demo")
+            try:
+                run.__enter__()
+                run.step(epoch=1, step=2, total_steps=10)
+                statuses = snapshot(project_roots=[])
+            finally:
+                run.__exit__(None, None, None)
+                for key, value in previous.items():
+                    if value is None:
+                        os.environ.pop(key, None)
+                    else:
+                        os.environ[key] = value
+            self.assertEqual(statuses[0].gpu_index, 3)
+            self.assertEqual(statuses[0].local_rank, 1)
+            self.assertEqual(statuses[0].rank, 5)
+            self.assertEqual(statuses[0].world_size, 8)
+            self.assertEqual(statuses[0].project, "demo")
+
     def test_heartbeat_ignores_partial_json_lines(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "run_123.jsonl"
@@ -119,6 +145,34 @@ class TrainingStatusTests(unittest.TestCase):
             )
             status = _parse_heartbeat(path)
             self.assertEqual(status.state, "orphaned")
+            self.assertEqual(status.state_reason, "pid_missing")
+
+    def test_heartbeat_preserves_metrics_and_computes_eta_speed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / f"run_{os.getpid()}.jsonl"
+            path.write_text(
+                "\n".join(
+                    [
+                        '{"event": "run_start", "pid": %d, "run_name": "metrics", "total_epochs": 2, "project": "demo"}' % os.getpid(),
+                        '{"event": "step", "pid": %d, "run_name": "metrics", "epoch": 0, "step": 10, "total_steps": 100, "time": 1000.0}' % os.getpid(),
+                        '{"checkpoint_path": "/tmp/ckpt.pt", "epoch": 0, "event": "step", "learning_rate": 0.001, "loss": 0.42, "metric_name": "acc", "metric_value": 0.9, "pid": %d, "rank": 1, "run_name": "metrics", "step": 20, "time": 1005.0, "total_steps": 100, "world_size": 4}' % os.getpid(),
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            status = _parse_heartbeat(path)
+            self.assertEqual(status.loss, 0.42)
+            self.assertEqual(status.learning_rate, 0.001)
+            self.assertEqual(status.checkpoint_path, "/tmp/ckpt.pt")
+            self.assertEqual(status.metric_name, "acc")
+            self.assertEqual(status.metric_value, 0.9)
+            self.assertEqual(status.rank, 1)
+            self.assertEqual(status.world_size, 4)
+            self.assertEqual(status.speed_unit, "step")
+            self.assertAlmostEqual(status.speed_per_second, 2.0)
+            self.assertAlmostEqual(status.eta_seconds, 90.0)
+            self.assertEqual(status.state, "stalled")
+            self.assertEqual(status.state_reason, "heartbeat_stale")
 
 
 if __name__ == "__main__":

@@ -114,7 +114,7 @@ Quit the TUI with `q`, `ctrl+c`, or `ctrl+q`.
 Runs the live monitor.
 
 ```bash
-gpuwatch top [--backend auto|fake] [--interval 0.25] [--plain] [--no-training] [--ascii] [--theme soft-dark|terminal|light] [--root PATH]
+gpuwatch top [--backend auto|fake] [--interval 0.25] [--plain] [--no-training] [--ascii] [--theme soft-dark|terminal|light] [--mode auto|micro|wide-short|compact|medium|full] [--gpu 0,1] [--pid PID] [--user USER] [--cmd TEXT] [--state running,stalled] [--sort util|vram|age|progress|eta|run] [--reverse] [--root PATH]
 ```
 
 Useful examples:
@@ -124,6 +124,8 @@ gpuwatch top --interval 0.25
 gpuwatch top --plain --interval 0.1
 gpuwatch top --backend fake --theme soft-dark
 gpuwatch top --ascii --theme terminal
+gpuwatch top --mode wide-short --explain-layout
+gpuwatch top --gpu 0,3 --sort eta
 gpuwatch top --root /data/kmg/Trajectory_Prediction/related_works/My_MART_HIERAR_HRT_v2
 ```
 
@@ -132,7 +134,7 @@ gpuwatch top --root /data/kmg/Trajectory_Prediction/related_works/My_MART_HIERAR
 Prints a single snapshot.
 
 ```bash
-gpuwatch once [--backend auto|fake] [--json] [--no-training] [--ascii] [--theme soft-dark|terminal|light] [--root PATH]
+gpuwatch once [--backend auto|fake] [--json] [--no-training] [--ascii] [--theme soft-dark|terminal|light] [--mode auto|micro|wide-short|compact|medium|full] [--gpu 0,1] [--sort util|eta|run] [--root PATH]
 ```
 
 Examples:
@@ -141,6 +143,7 @@ Examples:
 gpuwatch once
 gpuwatch once --backend fake --theme light
 gpuwatch once --json
+gpuwatch once --backend fake --gpu 1 --json
 ```
 
 ### `gpuwatch json`
@@ -148,7 +151,7 @@ gpuwatch once --json
 Emits JSON snapshots for scripts.
 
 ```bash
-gpuwatch json [--backend auto|fake] [--watch] [--interval 1.0] [--limit N]
+gpuwatch json [--backend auto|fake] [--watch] [--interval 1.0] [--limit N] [--no-training] [--schema-version] [--gpu 0,1] [--sort util|eta|run]
 ```
 
 Examples:
@@ -156,20 +159,25 @@ Examples:
 ```bash
 gpuwatch json
 gpuwatch json --watch --interval 1.0 --limit 10
+gpuwatch json --watch --limit 1 --no-training
 ```
+
+JSON output includes `schema_version: "0.2"` and training statuses by default. Use
+`--no-training` for a pure GPU snapshot stream.
 
 ### `gpuwatch train-status`
 
 Scans training heartbeats and recent logs.
 
 ```bash
-gpuwatch train-status --root PATH [--backend auto|fake] [--json]
+gpuwatch train-status --root PATH [--backend auto|fake] [--json] [--watch] [--interval 0.25] [--stale-after 120] [--failed-only] [--run TEXT] [--explain]
 ```
 
 Example:
 
 ```bash
 gpuwatch train-status --root /data/kmg/Trajectory_Prediction/related_works/My_MART_HIERAR_HRT_v2
+gpuwatch train-status --watch --stale-after 120 --explain
 ```
 
 ### `gpuwatch doctor`
@@ -177,12 +185,17 @@ gpuwatch train-status --root /data/kmg/Trajectory_Prediction/related_works/My_MA
 Checks Python dependencies and NVML availability.
 
 ```bash
-gpuwatch doctor
+gpuwatch doctor [--backend auto|fake] [--root PATH]
 ```
+
+`doctor --root` checks recent logs and heartbeat files in addition to dependency and
+backend availability.
 
 ## Themes And Responsive Layout
 
-The default theme is `soft-dark`.
+The default theme is `soft-dark`. The automatic layout now treats wide and short terminals
+as a separate `wide-short` mode, so a `204x8` pane shows run/GPU ribbons instead of square
+tiles.
 
 ```bash
 gpuwatch top --theme soft-dark
@@ -194,6 +207,13 @@ Use `--ascii` if the terminal has trouble with Unicode borders:
 
 ```bash
 gpuwatch top --ascii --theme terminal
+```
+
+Force a layout while debugging:
+
+```bash
+gpuwatch top --mode micro
+gpuwatch top --mode full --explain-layout
 ```
 
 Responsive screenshots for several terminal sizes live in
@@ -231,17 +251,25 @@ For new training scripts, add `TrainingRun` heartbeat instrumentation:
 ```python
 from gpuwatch import TrainingRun
 
-with TrainingRun("eth_seed1", total_epochs=100) as run:
+with TrainingRun("eth_seed1", total_epochs=100, project="trajectory") as run:
     for epoch in range(100):
         run.epoch_start(epoch, total_steps=len(loader))
         for step, batch in enumerate(loader, start=1):
             loss = train_step(batch)
-            run.step(epoch, step, total_steps=len(loader), loss=float(loss))
+            run.step(
+                epoch,
+                step,
+                total_steps=len(loader),
+                loss=float(loss),
+                learning_rate=optimizer.param_groups[0]["lr"],
+                samples_per_sec=float(samples_per_sec),
+            )
         run.epoch_end(epoch)
 ```
 
-`TrainingRun` records `CUDA_VISIBLE_DEVICES` as a GPU hint when it is set. You can also
-bind the heartbeat explicitly:
+`TrainingRun` records `CUDA_VISIBLE_DEVICES`, `RANK`, `LOCAL_RANK`, `WORLD_SIZE`, and
+`NODE_RANK` when they are set. If `CUDA_VISIBLE_DEVICES=2,3` and `LOCAL_RANK=1`, gpuwatch
+binds the run to physical GPU `3`. You can also bind the heartbeat explicitly:
 
 ```python
 with TrainingRun("eth_seed1", total_epochs=100, gpu_index=3) as run:

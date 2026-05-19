@@ -10,7 +10,7 @@ from gpuwatch.sampler import sample_once
 from gpuwatch.training.status import TrainingStatus
 
 
-def render_text(snapshot, statuses=(), width=160, height=10, ascii_only=False, theme="soft-dark"):
+def render_text(snapshot, statuses=(), width=160, height=10, ascii_only=False, theme="soft-dark", display_mode="auto", explain_layout=False):
     console = Console(width=width, height=height, color_system=None, no_color=True, record=True, file=StringIO())
     console.print(
         render_dashboard(
@@ -21,6 +21,8 @@ def render_text(snapshot, statuses=(), width=160, height=10, ascii_only=False, t
             height=height,
             ascii_only=ascii_only,
             theme=theme,
+            display_mode=display_mode,
+            explain_layout=explain_layout,
         )
     )
     return console.export_text()
@@ -48,7 +50,7 @@ def snapshot_with_gpus(count):
 
 class RenderTests(unittest.TestCase):
     def test_micro_unicode_cards_have_visible_boundaries(self):
-        text = render_text(snapshot_with_gpus(8), width=204, height=8, ascii_only=False)
+        text = render_text(snapshot_with_gpus(8), width=204, height=8, ascii_only=False, display_mode="micro")
         self.assertIn("┌ G0", text)
         self.assertIn("┌ G5", text)
         self.assertIn("┌ G7", text)
@@ -63,7 +65,7 @@ class RenderTests(unittest.TestCase):
     def test_micro_cards_fit_common_small_viewports(self):
         snapshot = snapshot_with_gpus(8)
         for width, height in ((160, 10), (100, 8), (80, 12)):
-            text = render_text(snapshot, width=width, height=height, ascii_only=False)
+            text = render_text(snapshot, width=width, height=height, ascii_only=False, display_mode="micro")
             self.assertIn("┌ G", text)
             self.assertIn("│U", text)
             for line in text.splitlines():
@@ -108,7 +110,7 @@ class RenderTests(unittest.TestCase):
         self.assertNotIn("E 4/9/44%", text)
 
     def test_micro_ascii_tiles_avoid_unicode(self):
-        text = render_text(snapshot_with_gpus(4), width=160, height=10, ascii_only=True)
+        text = render_text(snapshot_with_gpus(4), width=160, height=10, ascii_only=True, display_mode="micro")
         for index in range(4):
             self.assertIn(f"+ G{index}", text)
         self.assertNotIn("┃", text)
@@ -161,6 +163,33 @@ class RenderTests(unittest.TestCase):
         text = render_text(snapshot, statuses=statuses, width=204, height=8)
         for label in ("IDLE", "BUSY", "HOT", "WARN", "CRIT"):
             self.assertIn(label, text)
+
+    def test_auto_wide_short_prioritizes_run_information(self):
+        statuses = [
+            TrainingStatus(
+                pid=12345,
+                gpu_index=3,
+                run_name="eth_seed7",
+                phase="train",
+                epoch=4,
+                max_epoch=9,
+                process_progress_percent=44.0,
+                eta_seconds=3600,
+                loss=0.82,
+                age_seconds=3,
+                state="running",
+            )
+        ]
+        text = render_text(snapshot_with_gpus(8), statuses=statuses, width=204, height=8)
+        self.assertIn("eth_seed7", text)
+        self.assertIn("ETA1h00m", text)
+        self.assertIn("HB3s", text)
+        self.assertNotIn("┌ G0", text)
+
+    def test_forced_micro_overrides_wide_short_auto(self):
+        text = render_text(snapshot_with_gpus(8), width=204, height=8, display_mode="micro", explain_layout=True)
+        self.assertIn("layout micro source=forced", text)
+        self.assertIn("┌ G0", text)
 
 
 if __name__ == "__main__":

@@ -17,6 +17,7 @@ from gpuwatch.models import GpuProcessSnapshot, SystemSnapshot
 from gpuwatch.render.formatters import bar, clamp_cells, clamp_text, mb, na, percent, seconds
 from gpuwatch.sampler import sample_once
 from gpuwatch.training.status import TrainingStatus, snapshot as training_snapshot
+from gpuwatch.view import ViewOptions, apply_view
 
 
 @dataclass(frozen=True)
@@ -83,6 +84,16 @@ class GpuHealth:
     label: str
     priority: int
     style_key: str
+    reason: str = ""
+
+
+@dataclass(frozen=True)
+class LayoutDecision:
+    mode: str
+    source: str
+    reason: str
+    width: Optional[int]
+    height: Optional[int]
 
 
 UNICODE_GLYPHS = RenderGlyphs("┃", "┃", "│", "…", "…", "┌", "┐", "└", "┘", "─", "│")
@@ -146,36 +157,50 @@ def render_dashboard(
     height: Optional[int] = None,
     ascii_only: bool = False,
     theme: str = "soft-dark",
+    display_mode: str = "auto",
+    explain_layout: bool = False,
 ) -> Group:
     status_list = list(training_statuses)
-    mode = _display_mode(width, height)
+    decision = _layout_decision(width, height, display_mode)
+    mode = decision.mode
     glyphs = ASCII_GLYPHS if ascii_only else UNICODE_GLYPHS
     render_theme = _resolve_theme(theme)
     if mode == "micro":
-        return _micro_dashboard(snapshot, status_list, include_training, width, height, glyphs, render_theme)
+        out = _micro_dashboard(snapshot, status_list, include_training, width, height, glyphs, render_theme)
+        return _with_layout_explain(out, decision, width, render_theme, explain_layout)
+    if mode == "wide-short":
+        out = _wide_short_dashboard(snapshot, status_list, include_training, width, height, glyphs, render_theme)
+        return _with_layout_explain(out, decision, width, render_theme, explain_layout)
     if mode == "compact":
-        return _compact_dashboard(snapshot, status_list, include_training, width, height, glyphs, render_theme)
+        out = _compact_dashboard(snapshot, status_list, include_training, width, height, glyphs, render_theme)
+        return _with_layout_explain(out, decision, width, render_theme, explain_layout)
     if mode == "medium":
-        return _medium_dashboard(snapshot, status_list, include_training, width, height, glyphs, render_theme)
+        out = _medium_dashboard(snapshot, status_list, include_training, width, height, glyphs, render_theme)
+        return _with_layout_explain(out, decision, width, render_theme, explain_layout)
 
     training_by_pid = {status.pid: status for status in status_list if status.pid is not None}
     process_rows = _row_budget(height, reserved=12 if include_training else 8, fallback=12)
     training_rows = _row_budget(height, reserved=14, fallback=8)
     renderables = [
         _host_panel(snapshot, render_theme),
-        _gpu_table(snapshot, max_rows=_row_budget(height, reserved=10, fallback=64), theme=render_theme),
-        _process_table(
-            snapshot,
-            training_by_pid,
-            max_command_width=max_command_width,
-            max_rows=process_rows,
-            theme=render_theme,
-        ),
     ]
     if include_training:
         renderables.append(_training_table(status_list, max_rows=training_rows, theme=render_theme))
+    renderables.extend(
+        [
+            _gpu_table(snapshot, statuses=status_list, max_rows=_row_budget(height, reserved=10, fallback=64), theme=render_theme),
+            _process_table(
+                snapshot,
+                training_by_pid,
+                max_command_width=max_command_width,
+                max_rows=process_rows,
+                theme=render_theme,
+            ),
+        ]
+    )
     renderables.append(_error_panel(snapshot, render_theme))
-    return _screen_group(renderables, width, height, render_theme)
+    out = _screen_group(renderables, width, height, render_theme)
+    return _with_layout_explain(out, decision, width, render_theme, explain_layout)
 
 
 def print_once(
@@ -185,6 +210,8 @@ def print_once(
     include_training: bool = True,
     ascii_only: Optional[bool] = None,
     theme: str = "soft-dark",
+    display_mode: str = "auto",
+    explain_layout: bool = False,
 ) -> None:
     target = console or Console()
     use_ascii = _console_ascii(target) if ascii_only is None else ascii_only
@@ -198,6 +225,8 @@ def print_once(
             height=target.height,
             ascii_only=use_ascii,
             theme=theme,
+            display_mode=display_mode,
+            explain_layout=explain_layout,
         )
     )
 
@@ -209,6 +238,10 @@ def watch_plain(
     show_training: bool = True,
     ascii_only: Optional[bool] = None,
     theme: str = "soft-dark",
+    display_mode: str = "auto",
+    explain_layout: bool = False,
+    view_options: Optional[ViewOptions] = None,
+    stale_after: float = 900.0,
 ) -> None:
     console = Console()
     use_ascii = _console_ascii(console) if ascii_only is None else ascii_only
@@ -216,10 +249,12 @@ def watch_plain(
         while True:
             snapshot = sample_once(backend=backend)
             statuses = (
-                training_snapshot(project_roots=list(project_roots), processes=list(snapshot.all_processes()))
+                training_snapshot(project_roots=list(project_roots), processes=list(snapshot.all_processes()), stale_after=stale_after)
                 if show_training
                 else []
             )
+            if view_options is not None:
+                snapshot, statuses = apply_view(snapshot, statuses, view_options)
             live.update(
                 render_dashboard(
                     snapshot,
@@ -230,6 +265,8 @@ def watch_plain(
                     height=console.height,
                     ascii_only=use_ascii,
                     theme=theme,
+                    display_mode=display_mode,
+                    explain_layout=explain_layout,
                 )
             )
             time.sleep(interval)
@@ -239,16 +276,42 @@ def _console_ascii(console: Console) -> bool:
     return bool(getattr(console.options, "ascii_only", False) or getattr(console, "legacy_windows", False))
 
 
-def _display_mode(width: Optional[int], height: Optional[int]) -> str:
+def _layout_decision(width: Optional[int], height: Optional[int], requested: str = "auto") -> LayoutDecision:
+    valid = {"auto", "micro", "wide-short", "compact", "medium", "full"}
+    requested = requested if requested in valid else "auto"
+    if requested != "auto":
+        return LayoutDecision(requested, "forced", "requested by --mode; output may crop on small terminals", width, height)
+    if height is not None and width is not None and height <= 10 and width >= 132:
+        return LayoutDecision("wide-short", "auto", "height<=10 and width>=132", width, height)
     if height is not None and height <= 12:
-        return "micro"
+        return LayoutDecision("micro", "auto", "height<=12", width, height)
     if width is not None and width < 72:
-        return "micro"
+        return LayoutDecision("micro", "auto", "width<72", width, height)
     if (height is not None and height <= 20) or (width is not None and width < 104):
-        return "compact"
+        return LayoutDecision("compact", "auto", "height<=20 or width<104", width, height)
     if (height is not None and height <= 30) or (width is not None and width < 132):
-        return "medium"
-    return "full"
+        return LayoutDecision("medium", "auto", "height<=30 or width<132", width, height)
+    return LayoutDecision("full", "auto", "default full layout", width, height)
+
+
+def _with_layout_explain(
+    renderable: object,
+    decision: LayoutDecision,
+    width: Optional[int],
+    theme: RenderTheme,
+    enabled: bool,
+) -> Group:
+    if not enabled:
+        return renderable if isinstance(renderable, Group) else Group(renderable)
+    return Group(_layout_explain_line(decision, width, theme), renderable)
+
+
+def _layout_explain_line(decision: LayoutDecision, width: Optional[int], theme: RenderTheme) -> Text:
+    text = (
+        f"layout {decision.mode} source={decision.source} "
+        f"size={decision.width or '?'}x{decision.height or '?'} reason={decision.reason}"
+    )
+    return _styled_line(clamp_text(text, max(20, (width or 80) - 1)), width, theme, "muted")
 
 
 def _row_budget(height: Optional[int], reserved: int, fallback: int) -> int:
@@ -383,6 +446,118 @@ def _micro_dashboard(
     return _screen_group(rows, width, height, theme, used_lines=used_lines)
 
 
+def _wide_short_dashboard(
+    snapshot: SystemSnapshot,
+    statuses: List[TrainingStatus],
+    include_training: bool,
+    width: Optional[int],
+    height: Optional[int],
+    glyphs: RenderGlyphs,
+    theme: RenderTheme,
+) -> Group:
+    terminal_width = max(40, width or 132)
+    max_rows = max(1, (height or 8) - 1)
+    rows = [_host_line(snapshot, width, theme)]
+    ribbons = _wide_short_ribbons(snapshot, statuses if include_training else [], terminal_width, glyphs, theme)
+    hidden = max(0, len(ribbons) - max_rows)
+    visible = ribbons[:max_rows]
+    if hidden and visible:
+        visible[-1] = _styled_line(f"+{hidden + 1} rows hidden by terminal size", terminal_width, theme, "muted")
+    rows.extend(visible)
+    if not ribbons:
+        rows.append(_styled_line("No GPU data", terminal_width, theme, "muted"))
+    return _screen_group(rows, width, height, theme, used_lines=1 + len(visible))
+
+
+def _wide_short_ribbons(
+    snapshot: SystemSnapshot,
+    statuses: List[TrainingStatus],
+    width: int,
+    glyphs: RenderGlyphs,
+    theme: RenderTheme,
+) -> List[Text]:
+    rows = []
+    statuses_by_gpu = _statuses_by_gpu(statuses)
+    seen_status_ids = set()
+    for gpu in snapshot.gpus:
+        gpu_statuses = statuses_by_gpu.get(gpu.index, [])
+        for status in _active_training_statuses(gpu_statuses):
+            seen_status_ids.add(id(status))
+        rows.append(_wide_short_gpu_line(gpu, gpu_statuses, width, glyphs, theme))
+    for status in _active_training_statuses(statuses):
+        if id(status) in seen_status_ids:
+            continue
+        rows.append(_wide_short_status_line(status, width, theme))
+    return rows
+
+
+def _wide_short_gpu_line(
+    gpu,
+    statuses: List[TrainingStatus],
+    width: int,
+    glyphs: RenderGlyphs,
+    theme: RenderTheme,
+) -> Text:
+    active_statuses = _active_training_statuses(statuses)
+    status = active_statuses[0] if active_statuses else None
+    health = _gpu_health(gpu, _health_training_statuses(statuses))
+    parts = [
+        f"G{gpu.index}",
+        _health_badge(health),
+        f"U{percent(gpu.utilization_gpu_percent)}",
+        f"V{mb(gpu.memory_used_mb)}/{mb(gpu.memory_total_mb)}",
+        f"T{na(gpu.temperature_c, 'C')}",
+        f"P{_pid_label(gpu.processes)}",
+    ]
+    if status is not None:
+        parts.extend(_run_metric_parts(status))
+    else:
+        parts.append("-")
+    return _styled_line(_join_fit(parts, width, theme), width, theme, health.style_key, bg=theme.surface)
+
+
+def _wide_short_status_line(status: TrainingStatus, width: int, theme: RenderTheme) -> Text:
+    parts = [
+        f"G{status.gpu_index if status.gpu_index is not None else '-'}",
+        status.state.upper(),
+        f"P{status.pid if status.pid is not None else '-'}",
+    ]
+    parts.extend(_run_metric_parts(status))
+    role = "warn" if status.state in ("stalled", "orphaned") else ("crit" if status.state == "failed" else "info")
+    return _styled_line(_join_fit(parts, width, theme), width, theme, role, bg=theme.surface_alt)
+
+
+def _run_metric_parts(status: TrainingStatus) -> List[str]:
+    parts = [
+        clamp_text(status.run_name or "-", 24),
+        f"E{status.epoch_label()}",
+        percent(status.process_progress_percent),
+    ]
+    if status.eta_seconds is not None:
+        parts.append(f"ETA{seconds(status.eta_seconds)}")
+    if status.loss is not None:
+        parts.append(f"loss{status.loss:.4g}")
+    if status.learning_rate is not None:
+        parts.append(f"lr{status.learning_rate:.3g}")
+    if status.age_seconds is not None or status.stale_seconds is not None:
+        parts.append(f"HB{seconds(status.age_seconds if status.age_seconds is not None else status.stale_seconds)}")
+    if status.rank is not None:
+        rank = f"r{status.rank}"
+        if status.world_size is not None:
+            rank += f"/{status.world_size}"
+        parts.append(rank)
+    return parts
+
+
+def _statuses_by_gpu(statuses: List[TrainingStatus]) -> dict:
+    out = {}
+    for status in statuses:
+        if status.gpu_index is None:
+            continue
+        out.setdefault(status.gpu_index, []).append(status)
+    return out
+
+
 def _compact_dashboard(
     snapshot: SystemSnapshot,
     statuses: List[TrainingStatus],
@@ -394,11 +569,11 @@ def _compact_dashboard(
 ) -> Group:
     max_gpu_rows = _row_budget(height, reserved=7 if include_training else 4, fallback=16)
     max_training_rows = _row_budget(height, reserved=8, fallback=8)
-    gpu_lines = _compact_card_line_count(snapshot, max_gpu_rows)
+    gpu_lines = min(len(snapshot.gpus) or 1, max_gpu_rows) + 1
     used_lines = 1 + gpu_lines
     renderables = [
         _host_line(snapshot, width, theme),
-        _compact_gpu_cards(snapshot, statuses, max_rows=max_gpu_rows, glyphs=glyphs, theme=theme, width=width),
+        _compact_gpu_table(snapshot, statuses, max_rows=max_gpu_rows, glyphs=glyphs, theme=theme),
     ]
     if include_training and statuses and (height is None or height >= 16):
         renderables.append(_micro_training_table(statuses, max_rows=max_training_rows, theme=theme))
@@ -420,26 +595,21 @@ def _medium_dashboard(
 ) -> Group:
     training_by_pid = {status.pid: status for status in statuses if status.pid is not None}
     max_gpu_rows = _row_budget(height, reserved=8, fallback=16)
-    renderables = [
-        _host_line(snapshot, width, theme),
-        _compact_gpu_cards(
-            snapshot,
-            statuses,
-            max_rows=max_gpu_rows,
-            glyphs=glyphs,
-            theme=theme,
-            width=width,
-        ),
-        _process_table(
-            snapshot,
-            training_by_pid,
-            max_command_width=max(20, (width or 100) - 84),
-            max_rows=_row_budget(height, reserved=12 if include_training else 9, fallback=8),
-            theme=theme,
-        ),
-    ]
+    renderables = [_host_line(snapshot, width, theme)]
     if include_training and statuses and (height is None or height >= 24):
         renderables.append(_micro_training_table(statuses, max_rows=_row_budget(height, reserved=18, fallback=4), theme=theme))
+    renderables.extend(
+        [
+            _compact_gpu_table(snapshot, statuses, max_rows=max_gpu_rows, glyphs=glyphs, theme=theme),
+            _process_table(
+                snapshot,
+                training_by_pid,
+                max_command_width=max(20, (width or 100) - 84),
+                max_rows=_row_budget(height, reserved=12 if include_training else 9, fallback=8),
+                theme=theme,
+            ),
+        ]
+    )
     if snapshot.errors:
         renderables.append(_styled_line(clamp_text(" | ".join(snapshot.errors), max(20, (width or 80) - 1)), width, theme, "warn"))
     return _screen_group(renderables, width, height, theme)
@@ -497,7 +667,7 @@ def _select_micro_gpus(gpus: List[object], statuses: List[TrainingStatus], max_t
 
 
 def _gpu_interest(gpu, statuses: List[TrainingStatus]) -> float:
-    gpu_statuses = _active_training_statuses([status for status in statuses if status.gpu_index == gpu.index])
+    gpu_statuses = _health_training_statuses([status for status in statuses if status.gpu_index == gpu.index])
     score = float(_gpu_health(gpu, gpu_statuses).priority)
     if gpu_statuses:
         score += 100.0
@@ -511,13 +681,13 @@ def _gpu_interest(gpu, statuses: List[TrainingStatus]) -> float:
 
 
 def _gpu_block(gpu, statuses: List[TrainingStatus], tile_width: int, glyphs: RenderGlyphs, theme: RenderTheme) -> Text:
-    gpu_statuses = _active_training_statuses([status for status in statuses if status.gpu_index == gpu.index])
-    health = _gpu_health(gpu, gpu_statuses)
-    train = _tile_training_label(gpu_statuses)
+    all_gpu_statuses = [status for status in statuses if status.gpu_index == gpu.index]
+    health = _gpu_health(gpu, _health_training_statuses(all_gpu_statuses))
+    train = _tile_training_label(all_gpu_statuses)
     pid = _pid_label(gpu.processes)
     used = mb(gpu.memory_used_mb)
     total = mb(gpu.memory_total_mb)
-    line1 = _card_top(f"G{gpu.index} · {health.label}", tile_width, glyphs, theme, health)
+    line1 = _card_top(f"G{gpu.index} · {_health_badge(health)}", tile_width, glyphs, theme, health)
     line2 = _card_body(
         _join_fit(
             [
@@ -559,18 +729,27 @@ def _gpu_health(gpu, statuses: List[TrainingStatus]) -> GpuHealth:
     util = gpu.utilization_gpu_percent
     memory = gpu.memory_percent
     if "failed" in states:
-        return GpuHealth("CRIT", 5, "crit")
-    if (temp is not None and temp >= 82) or (memory is not None and memory >= 97):
-        return GpuHealth("CRIT", 5, "crit")
-    if "stalled" in states or (memory is not None and memory >= 90):
-        return GpuHealth("WARN", 4, "warn")
+        return GpuHealth("CRIT", 5, "crit", "failed")
+    if temp is not None and temp >= 82:
+        return GpuHealth("CRIT", 5, "crit", f"{temp}C")
+    if memory is not None and memory >= 97:
+        return GpuHealth("CRIT", 5, "crit", f"mem{memory:.0f}")
+    if "stalled" in states:
+        age = max((status.age_seconds or status.stale_seconds or 0 for status in statuses), default=0)
+        return GpuHealth("WARN", 4, "warn", f"stale{seconds(age)}")
+    if memory is not None and memory >= 90:
+        return GpuHealth("WARN", 4, "warn", f"mem{memory:.0f}")
     if temp is not None and temp >= 72:
-        return GpuHealth("HOT", 3, "warn")
+        return GpuHealth("HOT", 3, "warn", f"{temp}C")
     if util is not None and util >= 50:
-        return GpuHealth("BUSY", 2, "info")
+        return GpuHealth("BUSY", 2, "info", f"u{util:.0f}")
     if (util is None or util < 5) and (memory is None or memory < 5) and not gpu.processes:
-        return GpuHealth("IDLE", 1, "muted")
-    return GpuHealth("OK", 0, "ok")
+        return GpuHealth("IDLE", 1, "muted", "idle")
+    return GpuHealth("OK", 0, "ok", "")
+
+
+def _health_badge(health: GpuHealth) -> str:
+    return f"{health.label} {health.reason}" if health.reason else health.label
 
 
 def _card_top(title: str, width: int, glyphs: RenderGlyphs, theme: RenderTheme, health: GpuHealth) -> Text:
@@ -650,14 +829,14 @@ def _compact_gpu_cards(
 
 def _compact_gpu_card(gpu, statuses: List[TrainingStatus], width: int, glyphs: RenderGlyphs, theme: RenderTheme) -> Text:
     gpu_statuses = [status for status in statuses if status.gpu_index == gpu.index]
-    health = _gpu_health(gpu, gpu_statuses)
+    health = _gpu_health(gpu, _health_training_statuses(gpu_statuses))
     pid = _pid_label(gpu.processes)
     training = _gpu_training_label(gpu.index, statuses)
     name_width = max(8, width // 4)
     line1 = _compact_body_line(
         _join_fit(
             [
-                f"G{gpu.index} {health.label}",
+                f"G{gpu.index} {_health_badge(health)}",
                 short_gpu_name(gpu.name),
                 f"U {percent(gpu.utilization_gpu_percent)}",
                 f"V {mb(gpu.memory_used_mb)}/{mb(gpu.memory_total_mb)}",
@@ -718,32 +897,47 @@ def _compact_gpu_table(
     statuses: List[TrainingStatus],
     max_rows: int,
     glyphs: RenderGlyphs,
+    theme: Optional[RenderTheme] = None,
 ) -> Table:
-    table = Table(title=None, expand=True, box=None, pad_edge=False)
+    theme = theme or _resolve_theme("soft-dark")
+    table = Table(
+        title=None,
+        expand=True,
+        box=None,
+        pad_edge=False,
+        style=theme.surface_style,
+        header_style=_style(theme.text, theme.surface_alt, "bold"),
+    )
     table.add_column("GPU", no_wrap=True, justify="right")
-    table.add_column("Name", no_wrap=True)
+    table.add_column("State", no_wrap=True)
     table.add_column("Util", no_wrap=True)
     table.add_column("VRAM", no_wrap=True)
     table.add_column("Temp", no_wrap=True)
-    table.add_column("Fan", no_wrap=True)
     table.add_column("PIDs", no_wrap=True)
-    table.add_column("Training", no_wrap=True)
+    table.add_column("Run", no_wrap=True)
+    table.add_column("Prog", no_wrap=True)
+    table.add_column("ETA", no_wrap=True)
     gpus = list(snapshot.gpus)
     for gpu in gpus[:max_rows]:
+        all_gpu_statuses = [status for status in statuses if status.gpu_index == gpu.index]
+        gpu_statuses = _active_training_statuses(all_gpu_statuses)
+        status = gpu_statuses[0] if gpu_statuses else None
+        health = _gpu_health(gpu, _health_training_statuses(all_gpu_statuses))
         table.add_row(
             _gpu_badge(gpu.index, glyphs),
-            clamp_text(gpu.name, 16),
+            _health_badge(health),
             Text(f"{bar(gpu.utilization_gpu_percent, 8)} {percent(gpu.utilization_gpu_percent)}"),
             f"{mb(gpu.memory_used_mb)}/{mb(gpu.memory_total_mb)}",
             na(gpu.temperature_c, "C"),
-            percent(gpu.fan_percent),
             _pid_label(gpu.processes),
-            _gpu_training_label(gpu.index, statuses),
+            clamp_text(status.run_name if status else "-", 18),
+            percent(status.process_progress_percent if status else None) if status else "-",
+            seconds(status.eta_seconds) if status and status.eta_seconds is not None else "-",
         )
     if len(gpus) > max_rows:
-        table.add_row("...", f"+{len(gpus) - max_rows} more", "", "", "", "", "", "")
+        table.add_row("...", f"+{len(gpus) - max_rows} more", "", "", "", "", "", "", "")
     if not gpus:
-        table.add_row("-", "No GPU data", "", "", "", "", "", "")
+        table.add_row("-", "No GPU data", "", "", "", "", "", "", "")
     return table
 
 
@@ -761,6 +955,8 @@ def _micro_training_table(statuses: List[TrainingStatus], max_rows: int, theme: 
     table.add_column("Run", no_wrap=True)
     table.add_column("Epoch", no_wrap=True)
     table.add_column("Progress", no_wrap=True)
+    table.add_column("ETA", no_wrap=True)
+    table.add_column("HB", no_wrap=True)
     table.add_column("Phase", no_wrap=True)
     for status in statuses[:max_rows]:
         table.add_row(
@@ -769,10 +965,12 @@ def _micro_training_table(statuses: List[TrainingStatus], max_rows: int, theme: 
             clamp_text(status.run_name or "-", 24),
             status.epoch_label(),
             percent(status.process_progress_percent),
+            seconds(status.eta_seconds) if status.eta_seconds is not None else "-",
+            seconds(status.age_seconds if status.age_seconds is not None else status.stale_seconds),
             status.phase,
         )
     if len(statuses) > max_rows:
-        table.add_row("...", f"+{len(statuses) - max_rows}", "", "", "", "")
+        table.add_row("...", f"+{len(statuses) - max_rows}", "", "", "", "", "", "")
     return table
 
 
@@ -793,7 +991,12 @@ def _host_panel(snapshot: SystemSnapshot, theme: RenderTheme) -> Panel:
     )
 
 
-def _gpu_table(snapshot: SystemSnapshot, max_rows: int = 64, theme: Optional[RenderTheme] = None) -> Table:
+def _gpu_table(
+    snapshot: SystemSnapshot,
+    statuses: Optional[List[TrainingStatus]] = None,
+    max_rows: int = 64,
+    theme: Optional[RenderTheme] = None,
+) -> Table:
     theme = theme or _resolve_theme("soft-dark")
     table = Table(
         title="GPUs",
@@ -803,6 +1006,7 @@ def _gpu_table(snapshot: SystemSnapshot, max_rows: int = 64, theme: Optional[Ren
         border_style=theme.border_style,
     )
     table.add_column("GPU", no_wrap=True, justify="right")
+    table.add_column("State", no_wrap=True)
     table.add_column("Name")
     table.add_column("Util", no_wrap=True)
     table.add_column("VRAM", no_wrap=True)
@@ -812,11 +1016,14 @@ def _gpu_table(snapshot: SystemSnapshot, max_rows: int = 64, theme: Optional[Ren
     table.add_column("Power", no_wrap=True)
     table.add_column("PIDs")
     gpus = list(snapshot.gpus)
+    statuses_by_gpu = _statuses_by_gpu(statuses or [])
     for gpu in gpus[:max_rows]:
+        health = _gpu_health(gpu, statuses_by_gpu.get(gpu.index, []))
         pids = ", ".join(str(process.pid) for process in gpu.processes) or "-"
         memory_label = f"{mb(gpu.memory_used_mb)}/{mb(gpu.memory_total_mb)}"
         table.add_row(
             str(gpu.index),
+            _health_badge(health),
             gpu.name,
             Text(f"{bar(gpu.utilization_gpu_percent, 12)} {percent(gpu.utilization_gpu_percent)}"),
             Text(f"{bar(gpu.memory_percent, 12)} {percent(gpu.memory_percent)}"),
@@ -827,9 +1034,9 @@ def _gpu_table(snapshot: SystemSnapshot, max_rows: int = 64, theme: Optional[Ren
             pids,
         )
     if len(gpus) > max_rows:
-        table.add_row("...", f"+{len(gpus) - max_rows} more", "", "", "", "", "", "", "")
+        table.add_row("...", f"+{len(gpus) - max_rows} more", "", "", "", "", "", "", "", "")
     if not gpus:
-        table.add_row("-", "No GPU data", "-", "-", "-", "-", "-", "-", "-")
+        table.add_row("-", "-", "No GPU data", "-", "-", "-", "-", "-", "-", "-")
     return table
 
 
@@ -899,9 +1106,13 @@ def _training_table(
     table.add_column("GPU", no_wrap=True, justify="right")
     table.add_column("PID", no_wrap=True, justify="right")
     table.add_column("Run")
+    table.add_column("State", no_wrap=True)
     table.add_column("Phase", no_wrap=True)
     table.add_column("Epoch", no_wrap=True)
     table.add_column("Progress", no_wrap=True)
+    table.add_column("ETA", no_wrap=True)
+    table.add_column("Speed", no_wrap=True)
+    table.add_column("HB", no_wrap=True)
     table.add_column("Metric")
     table.add_column("Evidence")
     for status in status_list[:max_rows]:
@@ -911,17 +1122,29 @@ def _training_table(
             str(status.gpu_index) if status.gpu_index is not None else "-",
             str(status.pid) if status.pid is not None else "-",
             status.run_name or "-",
+            status.state,
             status.phase,
             status.epoch_label(),
             Text(f"{bar(progress, 16)} {percent(progress)}"),
+            seconds(status.eta_seconds) if status.eta_seconds is not None else "-",
+            _speed_label(status),
+            seconds(status.age_seconds if status.age_seconds is not None else status.stale_seconds),
             metric,
             f"{status.confidence:.2f} {status.evidence_label()}",
         )
     if len(status_list) > max_rows:
-        table.add_row("...", f"+{len(status_list) - max_rows}", "", "", "", "", "", "")
+        table.add_row("...", f"+{len(status_list) - max_rows}", "", "", "", "", "", "", "", "", "", "")
     if not status_list:
-        table.add_row("-", "-", "No training status", "-", "-", "-", "-", "-")
+        table.add_row("-", "-", "No training status", "-", "-", "-", "-", "-", "-", "-", "-", "-")
     return table
+
+
+def _speed_label(status: TrainingStatus) -> str:
+    if status.speed_per_second is None:
+        return "-"
+    unit = status.speed_unit or "step"
+    suffix = "it/s" if unit == "step" else f"{unit}/s"
+    return f"{status.speed_per_second:.2g} {suffix}"
 
 
 def _error_panel(snapshot: SystemSnapshot, theme: RenderTheme) -> Panel:
@@ -986,6 +1209,11 @@ def _tile_training_label(statuses: List[TrainingStatus]) -> str:
 
 def _active_training_statuses(statuses: List[TrainingStatus]) -> List[TrainingStatus]:
     inactive = {"complete", "failed", "orphaned"}
+    return [status for status in statuses if (status.state or "").lower() not in inactive]
+
+
+def _health_training_statuses(statuses: List[TrainingStatus]) -> List[TrainingStatus]:
+    inactive = {"complete", "orphaned"}
     return [status for status in statuses if (status.state or "").lower() not in inactive]
 
 

@@ -5,6 +5,7 @@ from typing import Iterable
 from gpuwatch.render.rich_cli import THEMES, render_dashboard
 from gpuwatch.sampler import sample_once
 from gpuwatch.training.status import snapshot as training_snapshot
+from gpuwatch.view import ViewOptions, apply_view
 
 
 def run_textual(
@@ -14,6 +15,9 @@ def run_textual(
     show_training: bool = True,
     ascii_only: bool = False,
     theme: str = "soft-dark",
+    display_mode: str = "auto",
+    explain_layout: bool = False,
+    view_options: ViewOptions = None,
 ) -> None:
     try:
         from textual.app import App, ComposeResult
@@ -40,6 +44,8 @@ def run_textual(
                 if show_training
                 else []
             )
+            if view_options is not None:
+                snapshot, statuses = apply_view(snapshot, statuses, view_options)
             width = max(24, self.size.width - 80)
             return render_dashboard(
                 snapshot,
@@ -50,6 +56,8 @@ def run_textual(
                 height=self.size.height,
                 ascii_only=ascii_only or _app_ascii(self.app),
                 theme=theme,
+                display_mode=display_mode,
+                explain_layout=explain_layout,
             )
 
     class GpuwatchApp(App):
