@@ -1,0 +1,23 @@
+gpuwatch cheetah-t4 nvml CPU 6% RAM 15% load 4.2,3.4,3.0                                                                
+│G0 IDLE  TT4  U 0%  V 3M/14.8G  T 34C                                                                                 │
+│Tesla T4  Fan N/A  Power 9.2/70W  PIDs -  Train -                                                                     │
+│G1 IDLE  TT4  U 0%  V 0M/14.8G  T 36C                                                                                 │
+│Tesla T4  Fan N/A  Power 9.5/70W  PIDs -  Train -                                                                     │
+│G2 IDLE  TT4  U 0%  V 0M/14.8G  T 38C                                                                                 │
+│Tesla T4  Fan N/A  Power 9.7/70W  PIDs -  Train -                                                                     │
+│G3 OK  TT4  U 4%  V 798M/14.8G  T 49C                                                                                 │
+│Tesla T4  Fan N/A  Power 27.9/70W  PIDs 3477684  Train train 1/30 5%                                                  │
+│G4 IDLE  TT4  U 0%  V 0M/14.8G  T 32C                                                                                 │
+│Tesla T4  Fan N/A  Power 9.8/70W  PIDs -  Train -                                                                     │
+│G5 IDLE  TT4  U 0%  V 0M/14.8G  T 34C                                                                                 │
+│Tesla T4  Fan N/A  Power 9.5/70W  PIDs -  Train -                                                                     │
+│G6 IDLE  TT4  U 0%  V 0M/14.8G  T 40C                                                                                 │
+│Tesla T4  Fan N/A  Power 14.8/70W  PIDs -  Train -                                                                    │
+                                                     GPU Processes                                                      
+┏━━━━━━┳━━━━━━━━━━┳━━━━━━━┳━━━━━━━━━━┳━━━━━━┳━━━━━━━┳━━━━━━━┳━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃  GPU ┃      PID ┃ User  ┃  GPU Mem ┃  CPU ┃   RSS ┃ Time  ┃ Training        ┃ Command                                ┃
+┡━━━━━━╇━━━━━━━━━━╇━━━━━━━╇━━━━━━━━━━╇━━━━━━╇━━━━━━━╇━━━━━━━╇━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│    3 │  3477684 │ kmg   │     795M │   0% │  2.1G │ 13s   │ train 1/30 5%   │ /home/kmg/anaconda3/envs/mart/bin/p~   │
+└──────┴──────────┴───────┴──────────┴──────┴───────┴───────┴─────────────────┴────────────────────────────────────────┘
+    GPU               PID  Run                                               Epoch         Progress           Phase     
+      3           3477684  gpuwatch_gpu3_visual_ch~                          1/30          5%                 train     

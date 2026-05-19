@@ -472,16 +472,10 @@ def _micro_gpu_blocks(
         table.add_column(width=tile_width, no_wrap=True, overflow="crop")
 
     max_tiles = max(1, columns * max(1, max_rows))
-    visible = gpus[:max_tiles]
-    overflow_count = max(0, len(gpus) - len(visible))
+    visible, overflow_count = _select_micro_gpus(gpus, statuses, max_tiles)
     tiles = [_gpu_block(gpu, statuses, tile_width, glyphs, theme) for gpu in visible]
     if overflow_count:
-        hidden = overflow_count
-        if len(tiles) >= max_tiles:
-            hidden += 1
-            tiles[-1] = _overflow_block(hidden, tile_width, glyphs, theme)
-        else:
-            tiles.append(_overflow_block(hidden, tile_width, glyphs, theme))
+        tiles.append(_overflow_block(overflow_count, tile_width, glyphs, theme))
 
     for start in range(0, len(tiles), columns):
         row = tiles[start : start + columns]
@@ -490,6 +484,30 @@ def _micro_gpu_blocks(
     if not gpus:
         table.add_row(_styled_line("No GPU data", tile_width, theme, "muted"))
     return table
+
+
+def _select_micro_gpus(gpus: List[object], statuses: List[TrainingStatus], max_tiles: int) -> tuple[List[object], int]:
+    if len(gpus) <= max_tiles:
+        return gpus, 0
+    if max_tiles <= 1:
+        return sorted(gpus, key=lambda gpu: (-_gpu_interest(gpu, statuses), gpu.index))[:1], 0
+    visible_slots = max_tiles - 1
+    selected = sorted(gpus, key=lambda gpu: (-_gpu_interest(gpu, statuses), gpu.index))[:visible_slots]
+    return sorted(selected, key=lambda gpu: gpu.index), len(gpus) - len(selected)
+
+
+def _gpu_interest(gpu, statuses: List[TrainingStatus]) -> float:
+    gpu_statuses = [status for status in statuses if status.gpu_index == gpu.index]
+    score = float(_gpu_health(gpu, gpu_statuses).priority)
+    if gpu_statuses:
+        score += 100.0
+    if gpu.processes:
+        score += 50.0
+    if gpu.utilization_gpu_percent is not None:
+        score += min(10.0, float(gpu.utilization_gpu_percent) / 10.0)
+    if gpu.memory_percent is not None:
+        score += min(10.0, float(gpu.memory_percent) / 10.0)
+    return score
 
 
 def _gpu_block(gpu, statuses: List[TrainingStatus], tile_width: int, glyphs: RenderGlyphs, theme: RenderTheme) -> Text:

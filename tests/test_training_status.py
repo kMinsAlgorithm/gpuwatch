@@ -3,7 +3,7 @@ import unittest
 import os
 from pathlib import Path
 
-from gpuwatch.training.status import parse_log, snapshot
+from gpuwatch.training.status import _parse_heartbeat, parse_log, snapshot
 from gpuwatch.training.tracker import TrainingRun
 
 
@@ -41,7 +41,9 @@ class TrainingStatusTests(unittest.TestCase):
     def test_training_run_heartbeat(self):
         with tempfile.TemporaryDirectory() as tmp:
             previous = os.environ.get("GPUWATCH_EXTRA_RUN_DIRS")
+            previous_run_dir = os.environ.get("GPUWATCH_RUN_DIR")
             os.environ["GPUWATCH_EXTRA_RUN_DIRS"] = tmp
+            os.environ["GPUWATCH_RUN_DIR"] = tmp
             run = TrainingRun("unit_run", total_epochs=10, skill_dir=tmp)
             try:
                 run.__enter__()
@@ -53,6 +55,10 @@ class TrainingStatusTests(unittest.TestCase):
                     os.environ.pop("GPUWATCH_EXTRA_RUN_DIRS", None)
                 else:
                     os.environ["GPUWATCH_EXTRA_RUN_DIRS"] = previous
+                if previous_run_dir is None:
+                    os.environ.pop("GPUWATCH_RUN_DIR", None)
+                else:
+                    os.environ["GPUWATCH_RUN_DIR"] = previous_run_dir
             self.assertTrue(statuses)
             status = statuses[0]
             self.assertEqual(status.run_name, "unit_run")
@@ -60,6 +66,25 @@ class TrainingStatusTests(unittest.TestCase):
             self.assertEqual(status.step, 5)
             self.assertEqual(status.total_steps, 10)
             self.assertEqual(status.phase, "train")
+
+    def test_heartbeat_ignores_partial_json_lines(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "run_123.jsonl"
+            path.write_text(
+                "\n".join(
+                    [
+                        '{"event": "run_start", "pid": 123, "run_name": "partial", "total_epochs": 10}',
+                        '{"event": "step", "pid": 123, "run_name": "partial", "epoch": 4, "step": 2, "total_steps": 5}',
+                        '{"event": "step", "pid":',
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            status = _parse_heartbeat(path)
+            self.assertEqual(status.pid, 123)
+            self.assertEqual(status.run_name, "partial")
+            self.assertEqual(status.epoch, 4)
+            self.assertEqual(status.step, 2)
 
 
 if __name__ == "__main__":

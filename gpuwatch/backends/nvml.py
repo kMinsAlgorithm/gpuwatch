@@ -118,8 +118,22 @@ class NvmlGpuBackend:
     ) -> Tuple[GpuProcessSnapshot, ...]:
         by_pid: Dict[int, Dict[str, object]] = {}
         for process_type, function_names in (
-            ("C", ("nvmlDeviceGetComputeRunningProcesses_v3", "nvmlDeviceGetComputeRunningProcesses")),
-            ("G", ("nvmlDeviceGetGraphicsRunningProcesses_v3", "nvmlDeviceGetGraphicsRunningProcesses")),
+            (
+                "C",
+                (
+                    "nvmlDeviceGetComputeRunningProcesses_v3",
+                    "nvmlDeviceGetComputeRunningProcesses_v2",
+                    "nvmlDeviceGetComputeRunningProcesses",
+                ),
+            ),
+            (
+                "G",
+                (
+                    "nvmlDeviceGetGraphicsRunningProcesses_v3",
+                    "nvmlDeviceGetGraphicsRunningProcesses_v2",
+                    "nvmlDeviceGetGraphicsRunningProcesses",
+                ),
+            ),
         ):
             infos = None
             for function_name in function_names:

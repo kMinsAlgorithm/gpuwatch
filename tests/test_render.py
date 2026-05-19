@@ -64,10 +64,31 @@ class RenderTests(unittest.TestCase):
         snapshot = snapshot_with_gpus(8)
         for width, height in ((160, 10), (100, 8), (80, 12)):
             text = render_text(snapshot, width=width, height=height, ascii_only=False)
-            self.assertIn("┌ G0", text)
+            self.assertIn("┌ G", text)
             self.assertIn("│U", text)
             for line in text.splitlines():
                 self.assertLessEqual(cell_len(line), width)
+
+    def test_micro_prioritizes_training_gpu_when_overflowing(self):
+        snapshot = snapshot_with_gpus(8)
+        statuses = [
+            TrainingStatus(
+                pid=12345,
+                gpu_index=3,
+                run_name="tiny-overflow",
+                phase="train",
+                epoch=4,
+                max_epoch=9,
+                process_progress_percent=44.0,
+                state="running",
+            )
+        ]
+        text = render_text(snapshot, statuses=statuses, width=80, height=8, ascii_only=False)
+        self.assertIn("┌ G3", text)
+        self.assertIn("E 4/9/44%", text)
+        self.assertIn("GPUs", text)
+        for line in text.splitlines():
+            self.assertLessEqual(cell_len(line), 80)
 
     def test_micro_ascii_tiles_avoid_unicode(self):
         text = render_text(snapshot_with_gpus(4), width=160, height=10, ascii_only=True)

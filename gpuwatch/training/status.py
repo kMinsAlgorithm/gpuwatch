@@ -249,7 +249,10 @@ def _parse_heartbeat(path: Path) -> TrainingStatus:
     for line in _tail_text(path).splitlines():
         if not line.strip():
             continue
-        record = json.loads(line)
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
         latest = record
         if record.get("event") == "run_start":
             start = record
