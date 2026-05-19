@@ -168,6 +168,7 @@ class RenderTests(unittest.TestCase):
     def test_soft_dark_theme_has_background_styles(self):
         theme = THEMES["soft-dark"]
         self.assertEqual(theme.background, "#111827")
+        self.assertEqual(theme.surface_alt, "#222831")
         self.assertIn("on #111827", theme.bg_style)
         self.assertIn("on #1f2937", theme.surface_style)
 

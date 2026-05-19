@@ -32,7 +32,11 @@ def run_textual(
     render_theme = THEMES.get(theme, THEMES["soft-dark"])
     css_background = render_theme.background or "#000000"
     css_surface = render_theme.surface or css_background
+    css_surface_alt = render_theme.surface_alt or css_surface
+    css_border = render_theme.border or css_surface_alt
     css_text = render_theme.text or "#ffffff"
+    css_muted = render_theme.muted or css_text
+    css_warn = render_theme.warn or css_text
 
     class Dashboard(Static):
         snapshot_text = reactive("")
@@ -80,7 +84,41 @@ def run_textual(
             color: {css_text};
         }}
         Footer {{
-            background: {css_surface};
+            background: {css_background};
+            color: {css_text};
+        }}
+        Footer .footer--key {{
+            background: {css_background};
+            color: {css_warn};
+            text-style: bold;
+        }}
+        Footer .footer--description {{
+            background: {css_background};
+            color: {css_text};
+        }}
+        Footer .footer--highlight {{
+            background: {css_surface_alt};
+            color: {css_text};
+        }}
+        Footer .footer--highlight-key {{
+            background: {css_surface_alt};
+            color: {css_warn};
+            text-style: bold;
+        }}
+        Footer .footer--separator {{
+            background: {css_background};
+            color: {css_border};
+        }}
+        Footer .footer--disabled {{
+            background: {css_background};
+            color: {css_muted};
+        }}
+        Footer .footer--highlight-disabled {{
+            background: {css_surface_alt};
+            color: {css_muted};
+        }}
+        Footer .footer--highlight-description {{
+            background: {css_surface_alt};
             color: {css_text};
         }}
         """
