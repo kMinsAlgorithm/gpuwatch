@@ -3,7 +3,8 @@ import unittest
 import os
 from pathlib import Path
 
-from gpuwatch.training.status import _parse_heartbeat, parse_log, snapshot
+from gpuwatch.models import GpuProcessSnapshot
+from gpuwatch.training.status import _best_log_match, _parse_heartbeat, parse_log, snapshot
 from gpuwatch.training.tracker import TrainingRun
 
 
@@ -37,6 +38,134 @@ class TrainingStatusTests(unittest.TestCase):
             self.assertEqual(status.step, 40)
             self.assertEqual(status.total_steps, 800)
             self.assertEqual(status.phase, "train")
+
+    def test_parse_5_20_start_and_epoch_summary(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "520caer_prt_v1_20260521_001330_eth2_gpu1.log"
+            log.write_text(
+                "\n".join(
+                    [
+                        "[INFO][zara1] Start Training | epochs=150 | lr=0.0012",
+                        "[ZARA1][TRAIN] Epoch 4",
+                        "[INFO][zara1][seed 1][Epoch 4/149] loss(total/traj/distill/aux)=(0.30738/0.29932/0.00807/0.00000) | val_ADE=0.28166 | val_FDE=0.48439 | score=0.76605 | best_epoch=3",
+                    ]
+                )
+            )
+            status = parse_log(log)
+            self.assertEqual(status.epoch, 4)
+            self.assertEqual(status.max_epoch, 149)
+            self.assertEqual(status.phase, "between_epochs")
+            self.assertAlmostEqual(status.process_progress_percent, 100.0 * 5.0 / 149.0)
+            self.assertEqual(status.learning_rate, 0.0012)
+            self.assertEqual(status.loss, 0.30738)
+            self.assertEqual(status.val_ade, 0.28166)
+            self.assertEqual(status.val_fde, 0.48439)
+
+    def test_parse_5_20_start_before_first_summary(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            log = Path(tmp) / "fresh.log"
+            log.write_text("[INFO][zara1] Start Training | epochs=150 | lr=0.0012\n[ZARA1][TRAIN] Epoch 0\n")
+            status = parse_log(log)
+            self.assertEqual(status.epoch, 0)
+            self.assertEqual(status.max_epoch, 149)
+            self.assertEqual(status.phase, "train")
+            self.assertEqual(status.epoch_label(), "0/149")
+            self.assertEqual(status.learning_rate, 0.0012)
+
+    def test_log_match_uses_run_name_tokens_for_5_20_nohup_logs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            nba_log = root / "520caer_prt_v1_20260521_001330_nba_gpu0.log"
+            eth2_log = root / "520caer_prt_v1_20260521_001330_eth2_gpu1.log"
+            nba_log.write_text("[INFO][NBA][seed 0][Epoch 7/99] score=1.7\n")
+            eth2_log.write_text("[INFO][zara1][seed 1][Epoch 4/149] score=0.7\n")
+            statuses = [parse_log(nba_log), parse_log(eth2_log)]
+            process = GpuProcessSnapshot(
+                pid=2991475,
+                gpu_index=1,
+                gpu_uuid="GPU-test",
+                cmdline=(
+                    "python3",
+                    "./eth_rg_hrt_v5_relation_logv1_agentwise_54edge.py",
+                    "--run-name",
+                    "520caer_prt_v1_eth2_seed1",
+                    "--datasets",
+                    "zara1,zara2",
+                ),
+            )
+            match = _best_log_match(process, statuses)
+            self.assertIsNotNone(match)
+            self.assertIn("eth2_gpu1", match.log_path)
+
+    def test_log_match_keeps_5_20_duplicate_run_separate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            original_log = root / "520caer_prt_v1_20260521_001330_eth2_gpu1.log"
+            duplicate_log = root / "520caer_prt_v1_20260521_001543_eth2_duplicate_gpu1.log"
+            original_log.write_text("[INFO][zara1][seed 1][Epoch 4/149] score=0.7\n")
+            duplicate_log.write_text("[INFO][zara1][seed 1][Epoch 5/149] score=0.6\n")
+            statuses = [parse_log(original_log), parse_log(duplicate_log)]
+            original_process = GpuProcessSnapshot(
+                pid=2991475,
+                gpu_index=1,
+                gpu_uuid="GPU-test",
+                cmdline=("python3", "./eth.py", "--run-name", "520caer_prt_v1_eth2_seed1"),
+            )
+            duplicate_process = GpuProcessSnapshot(
+                pid=3012627,
+                gpu_index=1,
+                gpu_uuid="GPU-test",
+                cmdline=("python3", "./eth.py", "--run-name", "520caer_prt_v1_eth2_seed1_dup_20260521_001543"),
+            )
+            original_match = _best_log_match(original_process, statuses)
+            duplicate_match = _best_log_match(duplicate_process, statuses)
+            self.assertIsNotNone(original_match)
+            self.assertIsNotNone(duplicate_match)
+            self.assertIn("001330_eth2_gpu1", original_match.log_path)
+            self.assertIn("001543_eth2_duplicate", duplicate_match.log_path)
+
+    def test_log_match_respects_gpu_suffix_when_new_duplicate_log_is_fresher(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            eth2_log = root / "520caer_prt_v1_20260521_001543_eth2_duplicate_gpu1.log"
+            hotel_log = root / "520caer_prt_v1_20260521_160323_hotel_duplicate_gpu0.log"
+            eth2_log.write_text("[INFO][zara1][seed 1][Epoch 79/149] score=0.6\n")
+            hotel_log.write_text("[INFO][hotel] Start Training | epochs=150 | lr=0.0018\n[HOTEL][TRAIN] Epoch 0\n")
+            statuses = [parse_log(eth2_log), parse_log(hotel_log)]
+            process = GpuProcessSnapshot(
+                pid=3012627,
+                gpu_index=1,
+                gpu_uuid="GPU-test",
+                cmdline=("python3", "./eth.py", "--run-name", "520caer_prt_v1_eth2_seed1_dup_20260521_001543"),
+            )
+            match = _best_log_match(process, statuses)
+            self.assertIsNotNone(match)
+            self.assertIn("eth2_duplicate_gpu1", match.log_path)
+
+    def test_log_match_rejects_conflicting_zara_dataset_suffix(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            zara1_log = root / "520caer_prt_v1_20260521_161530_zara1_resume_gpu1.log"
+            zara2_log = root / "520caer_prt_v1_20260521_161037_zara2_gpu1.log"
+            zara1_log.write_text("[INFO][zara1][seed 1][Epoch 80/149] score=0.6\n")
+            zara2_log.write_text("[INFO][zara2][seed 1][Epoch 7/149] score=0.5\n")
+            statuses = [parse_log(zara1_log), parse_log(zara2_log)]
+            process = GpuProcessSnapshot(
+                pid=3303779,
+                gpu_index=1,
+                gpu_uuid="GPU-test",
+                cmdline=(
+                    "python3",
+                    "./eth.py",
+                    "--run-name",
+                    "520caer_prt_v1_zara2_seed1_gpu1_20260521_161037",
+                    "--datasets",
+                    "zara2",
+                ),
+            )
+            match = _best_log_match(process, statuses)
+            self.assertIsNotNone(match)
+            self.assertIn("zara2_gpu1", match.log_path)
 
     def test_training_run_heartbeat(self):
         with tempfile.TemporaryDirectory() as tmp:

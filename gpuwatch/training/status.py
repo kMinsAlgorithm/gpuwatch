@@ -14,11 +14,31 @@ from gpuwatch.training.tracker import default_run_dir
 
 INFO_EPOCH_RE = re.compile(r"\[INFO\](?:\[[^\]]+\]){0,5}\[Epoch\s+(\d+)\s*/\s*(\d+)\]")
 INLINE_EPOCH_RE = re.compile(r"Epochs?:\s*(\d+)\s*/\s*(\d+)")
+START_TRAINING_RE = re.compile(r"Start Training\s*\|\s*epochs\s*=\s*(\d+)", re.IGNORECASE)
 ITER_RE = re.compile(r"It:\s*(\d+)\s*/\s*(\d+)")
 PHASE_RE = re.compile(r"\[([A-Za-z0-9_-]+)\]\[(TRAIN|Train|TEST|Test|VAL|Val)\]\s+Epoch\s+(\d+)")
 RUN_NAME_RE = re.compile(r"\[INFO\]\[([^\]]+)\]\[Epoch")
-METRIC_RE = re.compile(r"(?:val_)?(ADE|FDE|score|best_epoch)\s*[:=]\s*([0-9.]+)", re.IGNORECASE)
-BEST_RE = re.compile(r"\[BEST\].*epoch\s*=\s*(\d+).*ADE\s*=\s*([0-9.]+).*FDE\s*=\s*([0-9.]+)", re.IGNORECASE)
+METRIC_RE = re.compile(r"(?:val_)?(ADE|FDE|score|best_epoch)\s*[:=]\s*([-+0-9.eE]+)", re.IGNORECASE)
+BEST_RE = re.compile(r"\[BEST\].*epoch\s*=\s*(\d+).*ADE\s*=\s*([-+0-9.eE]+).*FDE\s*=\s*([-+0-9.eE]+)", re.IGNORECASE)
+LOSS_TOTAL_RE = re.compile(r"loss\([^)]*\)\s*=\s*\(\s*([-+0-9.eE]+)", re.IGNORECASE)
+LR_RE = re.compile(r"\blr\s*=\s*([-+0-9.eE]+)", re.IGNORECASE)
+MATCH_TOKEN_RE = re.compile(r"[a-z]+[0-9]*|[0-9]+")
+GPU_TOKEN_RE = re.compile(r"(?:^|[_-])gpu(\d+)(?:$|[_-])", re.IGNORECASE)
+DATASET_TOKEN_RE = re.compile(r"(?:^|[^A-Za-z0-9])(nba|eth\d*|hotel|univ|zara\d+)(?=$|[^A-Za-z0-9])", re.IGNORECASE)
+MATCH_TOKEN_STOPWORDS = {
+    "bin",
+    "config",
+    "configs",
+    "envs",
+    "gpuwatch",
+    "home",
+    "kmg",
+    "name",
+    "python",
+    "python3",
+    "run",
+    "yaml",
+}
 _LOG_CACHE: Dict[Tuple[Tuple[str, ...], int, float], Tuple[float, List["TrainingStatus"]]] = {}
 _LOG_CACHE_TTL_SECONDS = 15.0
 
@@ -158,6 +178,13 @@ def parse_log(path: Path, stale_after: float = 900.0) -> TrainingStatus:
         if run_match:
             run_name = run_match.group(1)
 
+        start_match = START_TRAINING_RE.search(line)
+        if start_match:
+            # The runners log a count ("epochs=150") while epoch summaries use
+            # the final zero-based index ("Epoch 0/149").
+            max_epoch = max(0, int(start_match.group(1)) - 1)
+            evidence.append("start-epochs")
+
         phase_match = PHASE_RE.search(line)
         if phase_match:
             raw_phase = phase_match.group(2).lower()
@@ -188,6 +215,14 @@ def parse_log(path: Path, stale_after: float = 900.0) -> TrainingStatus:
             key_lower = key.lower()
             metrics[key_lower] = float(value)
 
+        loss_match = LOSS_TOTAL_RE.search(line)
+        if loss_match:
+            metrics["loss"] = float(loss_match.group(1))
+
+        lr_match = LR_RE.search(line)
+        if lr_match:
+            metrics["lr"] = float(lr_match.group(1))
+
         if "Training Finished" in line or "run_end" in line:
             phase = "complete"
 
@@ -207,6 +242,8 @@ def parse_log(path: Path, stale_after: float = 900.0) -> TrainingStatus:
         val_ade=metrics.get("ade"),
         val_fde=metrics.get("fde"),
         score=metrics.get("score"),
+        loss=metrics.get("loss"),
+        learning_rate=metrics.get("lr"),
         state=state,
         state_reason="heartbeat_stale" if state == "stalled" else ("run_end_complete" if state == "complete" else "log_match"),
         last_update_time=mtime,
@@ -417,19 +454,49 @@ def _best_log_match(
 ) -> Optional[TrainingStatus]:
     command = " ".join(process.cmdline).lower()
     inferred = (_infer_run_name(process.cmdline) or "").lower()
+    command_tokens = _match_tokens(command)
+    inferred_tokens = _match_tokens(inferred)
+    process_tokens = command_tokens | inferred_tokens
+    process_dataset_tokens = _dataset_tokens(command)
     best = None
-    best_score = 0
+    best_score = 0.0
     for status in statuses:
         candidates = [status.run_name or "", Path(status.log_path or "").stem]
-        score = 0
+        candidate_dataset_tokens = _dataset_tokens(" ".join(candidates))
+        if (
+            process_dataset_tokens
+            and candidate_dataset_tokens
+            and process_dataset_tokens.isdisjoint(candidate_dataset_tokens)
+        ):
+            continue
+        score = 0.0
         for candidate in candidates:
             candidate_lower = candidate.lower()
             if candidate_lower and candidate_lower in command:
-                score += 3
+                score += 6.0
             if inferred and candidate_lower and inferred in candidate_lower:
-                score += 2
-        if status.stale_seconds is not None and status.stale_seconds < 3600:
-            score += 1
+                score += 5.0
+            candidate_tokens = _match_tokens(candidate_lower)
+            overlap = candidate_tokens & process_tokens
+            if len(overlap) >= 2:
+                score += min(5.0, float(len(overlap)))
+            if inferred_tokens and candidate_tokens & inferred_tokens:
+                score += 1.0
+            if "dup" in candidate_tokens and "dup" not in process_tokens:
+                score -= 3.0
+            if "dup" in process_tokens and "dup" not in candidate_tokens:
+                score -= 2.0
+            candidate_gpu = _gpu_token(candidate_lower)
+            if process.gpu_index is not None and candidate_gpu is not None:
+                if candidate_gpu == process.gpu_index:
+                    score += 2.0
+                else:
+                    score -= 6.0
+        if score > 0 and status.stale_seconds is not None:
+            if status.stale_seconds < 60:
+                score += 2.0
+            elif status.stale_seconds < 3600:
+                score += 1.0
         if score > best_score:
             best = status
             best_score = score
@@ -444,6 +511,28 @@ def _infer_run_name(cmdline: Sequence[str]) -> Optional[str]:
         if token.endswith(".py"):
             return Path(token).stem
     return None
+
+
+def _match_tokens(value: str) -> set[str]:
+    return {
+        "dup" if token == "duplicate" else token
+        for token in MATCH_TOKEN_RE.findall(value.lower())
+        if len(token) > 1 and token not in MATCH_TOKEN_STOPWORDS
+    }
+
+
+def _dataset_tokens(value: str) -> set[str]:
+    return {token.lower() for token in DATASET_TOKEN_RE.findall(value)}
+
+
+def _gpu_token(value: str) -> Optional[int]:
+    match = GPU_TOKEN_RE.search(value)
+    if not match:
+        return None
+    try:
+        return int(match.group(1))
+    except ValueError:
+        return None
 
 
 def _progress_percent(

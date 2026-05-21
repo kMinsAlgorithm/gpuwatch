@@ -21,6 +21,7 @@ DEFAULT_INTERVAL = 0.25
 SCHEMA_VERSION = "0.2"
 SORT_CHOICES = ("index", "util", "vram", "temp", "mem", "age", "progress", "eta", "run")
 MODE_CHOICES = ("auto", "micro", "wide-short", "compact", "medium", "full")
+BACKEND_CHOICES = ("auto", "nvml", "smi", "fake")
 TOP_COMMAND = "top"
 COMMANDS = frozenset((TOP_COMMAND, "once", "json", "train-status", "doctor"))
 
@@ -78,7 +79,7 @@ def build_parser() -> argparse.ArgumentParser:
     train = subparsers.add_parser("train-status", help="scan training heartbeats and logs")
     _add_view_options(train)
     train.add_argument("--root", action="append", default=[], help="project root to scan for logs")
-    train.add_argument("--backend", choices=("auto", "fake"), default="auto")
+    train.add_argument("--backend", choices=BACKEND_CHOICES, default="auto")
     train.add_argument("--json", action="store_true")
     train.add_argument("--watch", action="store_true")
     train.add_argument("--interval", type=float, default=DEFAULT_INTERVAL)
@@ -89,7 +90,7 @@ def build_parser() -> argparse.ArgumentParser:
     train.set_defaults(func=cmd_train_status)
 
     doctor = subparsers.add_parser("doctor", help="check runtime dependencies and NVML availability")
-    doctor.add_argument("--backend", choices=("auto", "fake"), default="auto")
+    doctor.add_argument("--backend", choices=BACKEND_CHOICES, default="auto")
     doctor.add_argument("--root", action="append", default=[])
     doctor.set_defaults(func=cmd_doctor)
 
@@ -97,7 +98,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _add_common(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--backend", choices=("auto", "fake"), default="auto")
+    parser.add_argument("--backend", choices=BACKEND_CHOICES, default="auto")
     parser.add_argument("--root", action="append", default=[], help="project root for training log scan")
 
 
@@ -251,7 +252,7 @@ def _print_train_status_table(statuses, errors, explain: bool = False) -> None:
         row = [
             str(status.gpu_index) if status.gpu_index is not None else "-",
             str(status.pid) if status.pid is not None else "-",
-            status.run_name or "-",
+            _tail_label(status.run_name, 36),
             status.state,
             status.phase,
             status.epoch_label(),
@@ -348,6 +349,15 @@ def _bounded_count(root: Path, pattern: str, limit: int = 500) -> int:
     except OSError:
         return 0
     return count
+
+
+def _tail_label(value: str, width: int) -> str:
+    text = value or "-"
+    if len(text) <= width:
+        return text
+    if width <= 1:
+        return "~"[:width]
+    return "~" + text[-(width - 1) :]
 
 
 def _view_options(args) -> ViewOptions:

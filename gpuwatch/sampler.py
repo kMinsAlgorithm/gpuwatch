@@ -5,6 +5,7 @@ from typing import Generator, Iterable, Optional
 
 from gpuwatch.backends.fake import FakeGpuBackend
 from gpuwatch.backends.host import HostBackend
+from gpuwatch.backends.nvidia_smi import NvidiaSmiGpuBackend, NvidiaSmiUnavailable
 from gpuwatch.backends.nvml import NvmlGpuBackend, NvmlUnavailable
 from gpuwatch.models import SystemSnapshot
 
@@ -18,6 +19,14 @@ def sample_once(backend: str = "auto") -> SystemSnapshot:
     if backend == "fake":
         gpus = FakeGpuBackend().collect(host_backend)
         backend_name = "fake"
+    elif backend == "smi":
+        try:
+            gpus = NvidiaSmiGpuBackend().collect(host_backend)
+            backend_name = "nvidia-smi"
+        except NvidiaSmiUnavailable as exc:
+            errors.append(str(exc))
+            gpus = ()
+            backend_name = "nvidia-smi"
     else:
         try:
             with NvmlGpuBackend() as nvml_backend:
@@ -25,8 +34,17 @@ def sample_once(backend: str = "auto") -> SystemSnapshot:
             backend_name = "nvml"
         except NvmlUnavailable as exc:
             errors.append(str(exc))
-            gpus = ()
-            backend_name = "nvml"
+            if backend == "nvml":
+                gpus = ()
+                backend_name = "nvml"
+                return SystemSnapshot(host=host, gpus=tuple(gpus), errors=tuple(errors), backend=backend_name)
+            try:
+                gpus = NvidiaSmiGpuBackend().collect(host_backend)
+                backend_name = "nvidia-smi"
+            except NvidiaSmiUnavailable as smi_exc:
+                errors.append(str(smi_exc))
+                gpus = ()
+                backend_name = "nvml"
 
     return SystemSnapshot(host=host, gpus=tuple(gpus), errors=tuple(errors), backend=backend_name)
 

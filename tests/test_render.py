@@ -147,6 +147,41 @@ class RenderTests(unittest.TestCase):
         for line in text.splitlines():
             self.assertLessEqual(cell_len(line), 100)
 
+    def test_compact_gpu_table_shows_epoch_progress(self):
+        statuses = [
+            TrainingStatus(
+                pid=12345,
+                gpu_index=1,
+                run_name="520caer_prt_v1_eth2_seed1",
+                phase="train",
+                epoch=7,
+                max_epoch=149,
+                process_progress_percent=5.0,
+                state="running",
+            )
+        ]
+        text = render_text(snapshot_with_gpus(2), statuses=statuses, width=180, height=18, display_mode="compact")
+        self.assertIn("Epoch", text)
+        self.assertIn("7/149", text)
+        self.assertIn("5%", text)
+
+    def test_compact_run_label_preserves_dataset_suffix(self):
+        statuses = [
+            TrainingStatus(
+                pid=12345,
+                gpu_index=1,
+                run_name="520caer_prt_v1_20260521_161037_zara2_gpu1",
+                phase="train",
+                epoch=7,
+                max_epoch=149,
+                process_progress_percent=5.0,
+                state="running",
+            )
+        ]
+        text = render_text(snapshot_with_gpus(2), statuses=statuses, width=180, height=18, display_mode="compact")
+        self.assertIn("161037_zara2_gpu1", text)
+        self.assertNotIn("520caer_prt_v1_z", text)
+
     def test_micro_ascii_tiles_avoid_unicode(self):
         text = render_text(snapshot_with_gpus(4), width=160, height=10, ascii_only=True, display_mode="micro")
         for index in range(4):

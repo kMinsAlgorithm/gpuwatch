@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from gpuwatch.cli import _normalize_argv
+from gpuwatch.cli import _normalize_argv, _tail_label
 
 
 class CliTests(unittest.TestCase):
@@ -56,6 +56,11 @@ class CliTests(unittest.TestCase):
         if payload:
             self.assertIn("eta_seconds", payload[0])
             self.assertIn("state_reason", payload[0])
+
+    def test_tail_label_preserves_run_suffix(self):
+        label = _tail_label("520caer_prt_v1_20260521_161037_zara2_gpu1", 24)
+        self.assertEqual(label, "~60521_161037_zara2_gpu1")
+        self.assertNotIn("520caer", label)
 
     def test_doctor_root_fake_reports_project_root(self):
         with tempfile.TemporaryDirectory() as tmp:

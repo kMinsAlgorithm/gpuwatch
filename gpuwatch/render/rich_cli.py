@@ -537,7 +537,7 @@ def _wide_short_status_line(status: TrainingStatus, width: int, theme: RenderThe
 
 def _run_metric_parts(status: TrainingStatus) -> List[str]:
     parts = [
-        clamp_text(status.run_name or "-", 24),
+        _run_label(status.run_name, 24),
         f"E{status.epoch_label()}",
         percent(status.process_progress_percent),
     ]
@@ -947,6 +947,7 @@ def _compact_gpu_table(
     table.add_column("Temp", no_wrap=True)
     table.add_column("PIDs", no_wrap=True)
     table.add_column("Run", no_wrap=True)
+    table.add_column("Epoch", no_wrap=True)
     table.add_column("Prog", no_wrap=True)
     table.add_column("ETA", no_wrap=True)
     gpus = list(snapshot.gpus)
@@ -962,14 +963,15 @@ def _compact_gpu_table(
             f"{mb(gpu.memory_used_mb)}/{mb(gpu.memory_total_mb)}",
             na(gpu.temperature_c, "C"),
             _pid_label(gpu.processes),
-            clamp_text((status.run_name or "-") if status else "-", 18),
+            _run_label(status.run_name if status else None, 18),
+            status.epoch_label() if status else "-",
             percent(status.process_progress_percent if status else None) if status else "-",
             seconds(status.eta_seconds) if status and status.eta_seconds is not None else "-",
         )
     if len(gpus) > max_rows:
-        table.add_row("...", f"+{len(gpus) - max_rows} more", "", "", "", "", "", "", "")
+        table.add_row("...", f"+{len(gpus) - max_rows} more", "", "", "", "", "", "", "", "")
     if not gpus:
-        table.add_row("-", "No GPU data", "", "", "", "", "", "", "")
+        table.add_row("-", "No GPU data", "", "", "", "", "", "", "", "")
     return table
 
 
@@ -996,7 +998,7 @@ def _micro_training_table(statuses: List[TrainingStatus], max_rows: int, theme: 
         table.add_row(
             str(status.gpu_index) if status.gpu_index is not None else "-",
             str(status.pid) if status.pid is not None else "-",
-            clamp_text(status.run_name or "-", 24),
+            _run_label(status.run_name, 24),
             status.state,
             status.epoch_label(),
             percent(status.process_progress_percent),
@@ -1159,7 +1161,7 @@ def _training_table(
         table.add_row(
             str(status.gpu_index) if status.gpu_index is not None else "-",
             str(status.pid) if status.pid is not None else "-",
-            status.run_name or "-",
+            _run_label(status.run_name, 36),
             status.state,
             status.phase,
             status.epoch_label(),
@@ -1183,6 +1185,16 @@ def _speed_label(status: TrainingStatus) -> str:
     unit = status.speed_unit or "step"
     suffix = "it/s" if unit == "step" else f"{unit}/s"
     return f"{status.speed_per_second:.2g} {suffix}"
+
+
+def _run_label(run_name: Optional[str], width: int) -> str:
+    text = run_name or "-"
+    if cell_len(text) <= width:
+        return text
+    if width <= 1:
+        return "~"[:width]
+    tail = text[-(width - 1) :]
+    return "~" + tail
 
 
 def _error_panel(snapshot: SystemSnapshot, theme: RenderTheme) -> Panel:
