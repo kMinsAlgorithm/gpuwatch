@@ -153,6 +153,7 @@ class RenderTests(unittest.TestCase):
                 pid=12345,
                 gpu_index=1,
                 run_name="520caer_prt_v1_eth2_seed1",
+                dataset="eth2",
                 phase="train",
                 epoch=7,
                 max_epoch=149,
@@ -162,6 +163,8 @@ class RenderTests(unittest.TestCase):
         ]
         text = render_text(snapshot_with_gpus(2), statuses=statuses, width=180, height=18, display_mode="compact")
         self.assertIn("Epoch", text)
+        self.assertIn("Dataset", text)
+        self.assertIn("eth2", text)
         self.assertIn("7/149", text)
         self.assertIn("5%", text)
 

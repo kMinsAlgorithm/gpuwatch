@@ -30,6 +30,15 @@ class ViewTests(unittest.TestCase):
         utils = [gpu.utilization_gpu_percent for gpu in filtered_snapshot.gpus]
         self.assertEqual(utils, sorted(utils, reverse=True))
 
+    def test_apply_view_filters_and_sorts_dataset(self):
+        snapshot = sample_once(backend="fake")
+        statuses = [
+            TrainingStatus(pid=1, gpu_index=0, run_name="a", dataset="zara2", state="running"),
+            TrainingStatus(pid=2, gpu_index=1, run_name="b", dataset="nba", state="running"),
+        ]
+        _snapshot, filtered_statuses = apply_view(snapshot, statuses, ViewOptions(dataset="nba", sort="dataset"))
+        self.assertEqual([status.run_name for status in filtered_statuses], ["b"])
+
 
 if __name__ == "__main__":
     unittest.main()

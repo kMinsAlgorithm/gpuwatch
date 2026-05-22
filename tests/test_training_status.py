@@ -10,6 +10,23 @@ from gpuwatch.training.tracker import TrainingRun
 
 
 class TrainingStatusTests(unittest.TestCase):
+    def setUp(self):
+        self._env_previous = {
+            "GPUWATCH_RUN_DIR": os.environ.get("GPUWATCH_RUN_DIR"),
+            "GPUWATCH_EXTRA_RUN_DIRS": os.environ.get("GPUWATCH_EXTRA_RUN_DIRS"),
+        }
+        self._run_dir = tempfile.TemporaryDirectory()
+        os.environ["GPUWATCH_RUN_DIR"] = self._run_dir.name
+        os.environ.pop("GPUWATCH_EXTRA_RUN_DIRS", None)
+
+    def tearDown(self):
+        for key, value in self._env_previous.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        self._run_dir.cleanup()
+
     def test_parse_info_epoch_metrics(self):
         with tempfile.TemporaryDirectory() as tmp:
             log = Path(tmp) / "run.log"
@@ -23,6 +40,7 @@ class TrainingStatusTests(unittest.TestCase):
             )
             status = parse_log(log)
             self.assertEqual(status.run_name, "eth_seed1")
+            self.assertEqual(status.dataset, "eth")
             self.assertEqual(status.epoch, 2)
             self.assertEqual(status.max_epoch, 100)
             self.assertEqual(status.val_ade, 0.45)
@@ -61,6 +79,7 @@ class TrainingStatusTests(unittest.TestCase):
             self.assertEqual(status.loss, 0.30738)
             self.assertEqual(status.val_ade, 0.28166)
             self.assertEqual(status.val_fde, 0.48439)
+            self.assertEqual(status.dataset, "zara1")
 
     def test_parse_5_20_start_before_first_summary(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -197,6 +216,37 @@ class TrainingStatusTests(unittest.TestCase):
             self.assertEqual(status.max_epoch, 9)
             self.assertIn("log-match", status.evidence)
 
+    def test_snapshot_infers_dataset_from_unbound_process_command(self):
+        process = GpuProcessSnapshot(
+            pid=2991475,
+            gpu_index=0,
+            gpu_uuid="GPU-test",
+            cmdline=("python3", "train.py", "--dataset", "nba", "--run-name", "trial_gpu0"),
+        )
+
+        statuses = snapshot(project_roots=[], processes=[process])
+
+        self.assertEqual(statuses[0].dataset, "nba")
+
+    def test_snapshot_prefers_explicit_dataset_arg_over_eth_split_name(self):
+        process = GpuProcessSnapshot(
+            pid=2991476,
+            gpu_index=1,
+            gpu_uuid="GPU-test",
+            cmdline=(
+                "python3",
+                "./eth_rg_hrt_v5_relation_logv1_agentwise_54edge_521.py",
+                "--run-name",
+                "521caer_prt_reg_v1_eth2_seed1",
+                "--datasets",
+                "zara1,zara2",
+            ),
+        )
+
+        statuses = snapshot(project_roots=[], processes=[process])
+
+        self.assertEqual(statuses[0].dataset, "zara1")
+
     def test_project_marker_check_ignores_permission_errors(self):
         with patch("gpuwatch.training.status.Path.exists", side_effect=PermissionError("denied")):
             with patch("gpuwatch.training.status.Path.is_dir", side_effect=PermissionError("denied")):
@@ -232,7 +282,7 @@ class TrainingStatusTests(unittest.TestCase):
             previous_run_dir = os.environ.get("GPUWATCH_RUN_DIR")
             os.environ["GPUWATCH_EXTRA_RUN_DIRS"] = tmp
             os.environ["GPUWATCH_RUN_DIR"] = tmp
-            run = TrainingRun("unit_run", total_epochs=10, skill_dir=tmp)
+            run = TrainingRun("unit_run", total_epochs=10, dataset="hotel", skill_dir=tmp)
             try:
                 run.__enter__()
                 run.step(epoch=3, step=5, total_steps=10, val_ade=0.42)
@@ -250,6 +300,7 @@ class TrainingStatusTests(unittest.TestCase):
             self.assertTrue(statuses)
             status = statuses[0]
             self.assertEqual(status.run_name, "unit_run")
+            self.assertEqual(status.dataset, "hotel")
             self.assertEqual(status.epoch, 3)
             self.assertEqual(status.step, 5)
             self.assertEqual(status.total_steps, 10)
@@ -341,7 +392,7 @@ class TrainingStatusTests(unittest.TestCase):
             path.write_text(
                 "\n".join(
                     [
-                        '{"event": "run_start", "pid": %d, "run_name": "metrics", "total_epochs": 2, "project": "demo"}' % os.getpid(),
+                        '{"event": "run_start", "pid": %d, "run_name": "metrics", "total_epochs": 2, "project": "demo", "metadata": {"dataset": "univ"}}' % os.getpid(),
                         '{"event": "step", "pid": %d, "run_name": "metrics", "epoch": 0, "step": 10, "total_steps": 100, "time": 1000.0}' % os.getpid(),
                         '{"checkpoint_path": "/tmp/ckpt.pt", "epoch": 0, "event": "step", "learning_rate": 0.001, "loss": 0.42, "metric_name": "acc", "metric_value": 0.9, "pid": %d, "rank": 1, "run_name": "metrics", "step": 20, "time": 1005.0, "total_steps": 100, "world_size": 4}' % os.getpid(),
                     ]
@@ -361,6 +412,20 @@ class TrainingStatusTests(unittest.TestCase):
             self.assertAlmostEqual(status.eta_seconds, 90.0)
             self.assertEqual(status.state, "stalled")
             self.assertEqual(status.state_reason, "heartbeat_stale")
+            self.assertEqual(status.dataset, "univ")
+
+    def test_heartbeat_normalizes_eth_split_dataset_alias(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / f"run_{os.getpid()}.jsonl"
+            path.write_text(
+                '{"event": "run_start", "pid": %d, "run_name": "split", "dataset": "eth2", "total_epochs": 10}\n'
+                % os.getpid(),
+                encoding="utf-8",
+            )
+
+            status = _parse_heartbeat(path)
+
+            self.assertEqual(status.dataset, "eth")
 
 
 if __name__ == "__main__":

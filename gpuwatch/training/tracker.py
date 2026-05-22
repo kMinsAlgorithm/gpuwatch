@@ -71,6 +71,7 @@ class TrainingRun:
         total_epochs: Optional[int] = None,
         gpu_index: Optional[int] = None,
         gpu_indices: Optional[Iterable[int]] = None,
+        dataset: Optional[str] = None,
         project: Optional[str] = None,
         skill_dir: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
@@ -82,6 +83,7 @@ class TrainingRun:
             inferred_indices.insert(0, int(gpu_index))
         self.gpu_indices = tuple(inferred_indices)
         self.gpu_index = int(gpu_index) if gpu_index is not None else (self.gpu_indices[0] if self.gpu_indices else _default_gpu_index())
+        self.dataset = dataset
         self.project = project
         self.metadata = metadata or {}
         base_dir = Path(skill_dir) if skill_dir else default_run_dir()
@@ -133,6 +135,8 @@ class TrainingRun:
             record["gpu_indices"] = list(self.gpu_indices)
         if self.project:
             record["project"] = self.project
+        if self.dataset:
+            record["dataset"] = self.dataset
         if self.cuda_visible_devices:
             record["cuda_visible_devices"] = self.cuda_visible_devices
         if self.rank is not None:

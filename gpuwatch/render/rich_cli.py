@@ -539,9 +539,10 @@ def _wide_short_status_line(status: TrainingStatus, width: int, theme: RenderThe
 def _run_metric_parts(status: TrainingStatus) -> List[str]:
     parts = [
         _run_label(status.run_name, 24),
-        f"E{status.epoch_label()}",
-        percent(status.process_progress_percent),
     ]
+    if status.dataset:
+        parts.append(f"D{clamp_text(status.dataset, 10)}")
+    parts.extend([f"E{status.epoch_label()}", percent(status.process_progress_percent)])
     if status.eta_seconds is not None:
         parts.append(f"ETA{seconds(status.eta_seconds)}")
     if status.loss is not None:
@@ -948,6 +949,7 @@ def _compact_gpu_table(
     table.add_column("Temp", no_wrap=True)
     table.add_column("PIDs", no_wrap=True)
     table.add_column("Run", no_wrap=True)
+    table.add_column("Dataset", no_wrap=True)
     table.add_column("Epoch", no_wrap=True)
     table.add_column("Prog", no_wrap=True)
     table.add_column("ETA", no_wrap=True)
@@ -965,14 +967,15 @@ def _compact_gpu_table(
             na(gpu.temperature_c, "C"),
             _pid_label(gpu.processes),
             _run_label(status.run_name if status else None, 18),
+            _dataset_label(status, 8),
             status.epoch_label() if status else "-",
             percent(status.process_progress_percent if status else None) if status else "-",
             seconds(status.eta_seconds) if status and status.eta_seconds is not None else "-",
         )
     if len(gpus) > max_rows:
-        table.add_row("...", f"+{len(gpus) - max_rows} more", "", "", "", "", "", "", "", "")
+        table.add_row("...", f"+{len(gpus) - max_rows} more", "", "", "", "", "", "", "", "", "")
     if not gpus:
-        table.add_row("-", "No GPU data", "", "", "", "", "", "", "", "")
+        table.add_row("-", "No GPU data", "", "", "", "", "", "", "", "", "")
     return table
 
 
@@ -989,6 +992,7 @@ def _micro_training_table(statuses: List[TrainingStatus], max_rows: int, theme: 
     table.add_column("GPU", no_wrap=True, justify="right")
     table.add_column("PID", no_wrap=True, justify="right")
     table.add_column("Run", no_wrap=True)
+    table.add_column("Dataset", no_wrap=True)
     table.add_column("State", no_wrap=True)
     table.add_column("Epoch", no_wrap=True)
     table.add_column("Progress", no_wrap=True)
@@ -1000,6 +1004,7 @@ def _micro_training_table(statuses: List[TrainingStatus], max_rows: int, theme: 
             str(status.gpu_index) if status.gpu_index is not None else "-",
             str(status.pid) if status.pid is not None else "-",
             _run_label(status.run_name, 24),
+            _dataset_label(status, 10),
             status.state,
             status.epoch_label(),
             percent(status.process_progress_percent),
@@ -1008,7 +1013,7 @@ def _micro_training_table(statuses: List[TrainingStatus], max_rows: int, theme: 
             status.state_reason or status.phase,
         )
     if len(statuses) > max_rows:
-        table.add_row("...", f"+{len(statuses) - max_rows}", "", "", "", "", "", "", "")
+        table.add_row("...", f"+{len(statuses) - max_rows}", "", "", "", "", "", "", "", "")
     return table
 
 
@@ -1147,6 +1152,7 @@ def _training_table(
     table.add_column("GPU", no_wrap=True, justify="right")
     table.add_column("PID", no_wrap=True, justify="right")
     table.add_column("Run")
+    table.add_column("Dataset", no_wrap=True)
     table.add_column("State", no_wrap=True)
     table.add_column("Phase", no_wrap=True)
     table.add_column("Epoch", no_wrap=True)
@@ -1163,6 +1169,7 @@ def _training_table(
             str(status.gpu_index) if status.gpu_index is not None else "-",
             str(status.pid) if status.pid is not None else "-",
             _run_label(status.run_name, 36),
+            _dataset_label(status, 12),
             status.state,
             status.phase,
             status.epoch_label(),
@@ -1174,9 +1181,9 @@ def _training_table(
             f"{status.confidence:.2f} {status.evidence_label()}",
         )
     if len(status_list) > max_rows:
-        table.add_row("...", f"+{len(status_list) - max_rows}", "", "", "", "", "", "", "", "", "", "")
+        table.add_row("...", f"+{len(status_list) - max_rows}", "", "", "", "", "", "", "", "", "", "", "")
     if not status_list:
-        table.add_row("-", "-", "No training status", "-", "-", "-", "-", "-", "-", "-", "-", "-")
+        table.add_row("-", "-", "No training status", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-")
     return table
 
 
@@ -1196,6 +1203,10 @@ def _run_label(run_name: Optional[str], width: int) -> str:
         return "~"[:width]
     tail = text[-(width - 1) :]
     return "~" + tail
+
+
+def _dataset_label(status: Optional[TrainingStatus], width: int) -> str:
+    return clamp_text((status.dataset if status else None) or "-", width)
 
 
 def _error_panel(snapshot: SystemSnapshot, theme: RenderTheme) -> Panel:

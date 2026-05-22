@@ -15,6 +15,7 @@ class ViewOptions:
     cmd: Optional[str] = None
     states: Optional[Tuple[str, ...]] = None
     run: Optional[str] = None
+    dataset: Optional[str] = None
     failed_only: bool = False
     sort: str = "index"
     reverse: bool = False
@@ -83,6 +84,8 @@ def _filter_statuses(statuses: list[TrainingStatus], options: ViewOptions) -> li
             continue
         if options.run and options.run.lower() not in (status.run_name or "").lower():
             continue
+        if options.dataset and options.dataset.lower() not in (status.dataset or "").lower():
+            continue
         out.append(status)
     return out
 
@@ -120,6 +123,8 @@ def _sort_statuses(statuses: list[TrainingStatus], options: ViewOptions) -> list
         key = lambda status: _none_last(status.eta_seconds)
     elif sort == "run":
         key = lambda status: ((status.run_name or "").lower(),)
+    elif sort == "dataset":
+        key = lambda status: ((status.dataset or "").lower(),)
     else:
         key = lambda status: _none_last(status.gpu_index)
     return sorted(statuses, key=lambda status: (key(status), status.pid or -1), reverse=options.reverse)
@@ -127,4 +132,3 @@ def _sort_statuses(statuses: list[TrainingStatus], options: ViewOptions) -> list
 
 def _none_last(value) -> tuple[int, object]:
     return (1, "") if value is None else (0, value)
-

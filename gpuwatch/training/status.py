@@ -24,7 +24,8 @@ LOSS_TOTAL_RE = re.compile(r"loss\([^)]*\)\s*=\s*\(\s*([-+0-9.eE]+)", re.IGNOREC
 LR_RE = re.compile(r"\blr\s*=\s*([-+0-9.eE]+)", re.IGNORECASE)
 MATCH_TOKEN_RE = re.compile(r"[a-z]+[0-9]*|[0-9]+")
 GPU_TOKEN_RE = re.compile(r"(?:^|[_-])gpu(\d+)(?:$|[_-])", re.IGNORECASE)
-DATASET_TOKEN_RE = re.compile(r"(?:^|[^A-Za-z0-9])(nba|eth\d*|hotel|univ|zara\d+)(?=$|[^A-Za-z0-9])", re.IGNORECASE)
+DATASET_TOKEN_RE = re.compile(r"(?:^|[^A-Za-z0-9])(nba|eth|hotel|univ|zara\d+)(?=$|[^A-Za-z0-9])", re.IGNORECASE)
+INFO_DATASET_RE = re.compile(r"\[INFO\]\[([^\]]+)\]", re.IGNORECASE)
 MATCH_TOKEN_STOPWORDS = {
     "bin",
     "config",
@@ -60,6 +61,7 @@ class TrainingStatus:
     pid: Optional[int] = None
     gpu_index: Optional[int] = None
     run_name: Optional[str] = None
+    dataset: Optional[str] = None
     phase: str = "unknown"
     epoch: Optional[int] = None
     max_epoch: Optional[int] = None
@@ -158,6 +160,7 @@ def snapshot(
                         pid=process.pid,
                         gpu_index=process.gpu_index,
                         run_name=_infer_run_name(process.cmdline),
+                        dataset=_infer_dataset_from_cmdline(process.cmdline),
                         phase="unknown",
                         state="unbound",
                         state_reason="gpu_process_only",
@@ -183,10 +186,15 @@ def parse_log(path: Path, stale_after: float = 900.0) -> TrainingStatus:
     max_epoch = None
     step = None
     total_steps = None
+    dataset = None
     metrics: Dict[str, float] = {}
     evidence = ["log"]
 
     for line in text.splitlines():
+        info_dataset_match = INFO_DATASET_RE.search(line)
+        if dataset is None and info_dataset_match:
+            dataset = _infer_dataset(info_dataset_match.group(1))
+
         run_match = RUN_NAME_RE.search(line)
         if run_match:
             run_name = run_match.group(1)
@@ -200,6 +208,8 @@ def parse_log(path: Path, stale_after: float = 900.0) -> TrainingStatus:
 
         phase_match = PHASE_RE.search(line)
         if phase_match:
+            if dataset is None:
+                dataset = _infer_dataset(phase_match.group(1))
             raw_phase = phase_match.group(2).lower()
             phase = "eval" if raw_phase in ("test", "val") else "train"
             epoch = int(phase_match.group(3))
@@ -240,11 +250,13 @@ def parse_log(path: Path, stale_after: float = 900.0) -> TrainingStatus:
             phase = "complete"
 
     progress = _progress_percent(epoch, max_epoch, step, total_steps, phase)
+    dataset = dataset or _infer_dataset(run_name) or _infer_dataset(str(path))
     state = "stalled" if stale > stale_after and phase not in ("complete",) else "running"
     if phase == "complete":
         state = "complete"
     return TrainingStatus(
         run_name=run_name,
+        dataset=dataset,
         phase=phase,
         epoch=epoch,
         max_epoch=max_epoch,
@@ -462,6 +474,13 @@ def _parse_heartbeat(path: Path, stale_after: float = 900.0) -> TrainingStatus:
         state_reason = "pid_missing"
     speed, speed_unit, eta = _heartbeat_speed_eta(records, start, latest, phase)
     metric_name = latest.get("metric_name") or start.get("metric_name")
+    run_name = latest.get("run_name") or start.get("run_name") or path.stem
+    explicit_dataset = _first_present(
+        latest.get("dataset"),
+        start.get("dataset"),
+        _metadata_value(latest, "dataset"),
+        _metadata_value(start, "dataset"),
+    )
     return TrainingStatus(
         pid=pid,
         gpu_index=_optional_int(
@@ -473,7 +492,8 @@ def _parse_heartbeat(path: Path, stale_after: float = 900.0) -> TrainingStatus:
             )
         ),
         project=_first_present(latest.get("project"), start.get("project"), _metadata_value(latest, "project"), _metadata_value(start, "project")),
-        run_name=latest.get("run_name") or start.get("run_name") or path.stem,
+        run_name=run_name,
+        dataset=_normalize_dataset(explicit_dataset) or _infer_dataset(run_name),
         phase=phase,
         epoch=epoch,
         max_epoch=max_epoch,
@@ -518,6 +538,7 @@ def _attach_process(
         pid=process.pid,
         gpu_index=process.gpu_index,
         run_name=status.run_name or _infer_run_name(process.cmdline),
+        dataset=status.dataset or _infer_dataset_from_cmdline(process.cmdline),
         phase=status.phase,
         epoch=status.epoch,
         max_epoch=status.max_epoch,
@@ -562,11 +583,11 @@ def _best_log_match(
     command_tokens = _match_tokens(command)
     inferred_tokens = _match_tokens(inferred)
     process_tokens = command_tokens | inferred_tokens
-    process_dataset_tokens = _dataset_tokens(command)
+    process_dataset_tokens = _explicit_dataset_tokens_from_cmdline(process.cmdline)
     best = None
     best_score = 0.0
     for status in statuses:
-        candidates = [status.run_name or "", Path(status.log_path or "").stem]
+        candidates = [status.dataset or "", status.run_name or "", Path(status.log_path or "").stem]
         candidate_dataset_tokens = _dataset_tokens(" ".join(candidates))
         if (
             process_dataset_tokens
@@ -637,7 +658,50 @@ def _match_tokens(value: str) -> set[str]:
 
 
 def _dataset_tokens(value: str) -> set[str]:
-    return {token.lower() for token in DATASET_TOKEN_RE.findall(value)}
+    return {dataset for token in DATASET_TOKEN_RE.findall(value) for dataset in (_normalize_dataset(token),) if dataset}
+
+
+def _explicit_dataset_tokens_from_cmdline(cmdline: Sequence[str]) -> set[str]:
+    tokens = set()
+    for idx, token in enumerate(cmdline):
+        value = None
+        if token in ("--dataset", "--datasets", "--dataset-name", "--dataset_name") and idx + 1 < len(cmdline):
+            value = cmdline[idx + 1]
+        elif token.startswith("--dataset=") or token.startswith("--datasets="):
+            value = token.split("=", 1)[1]
+        if value:
+            tokens.update(_dataset_tokens(value))
+    return tokens
+
+
+def _normalize_dataset(value) -> Optional[str]:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    text = text.split(",", 1)[0].strip().lower()
+    if re.fullmatch(r"eth\d+", text):
+        return "eth"
+    return text or None
+
+
+def _infer_dataset(value: str) -> Optional[str]:
+    match = DATASET_TOKEN_RE.search(value or "")
+    return _normalize_dataset(match.group(1)) if match else None
+
+
+def _infer_dataset_from_cmdline(cmdline: Sequence[str]) -> Optional[str]:
+    for idx, token in enumerate(cmdline):
+        if token in ("--dataset", "--datasets", "--dataset-name", "--dataset_name") and idx + 1 < len(cmdline):
+            dataset = _normalize_dataset(cmdline[idx + 1])
+            if dataset:
+                return dataset
+        if token.startswith("--dataset=") or token.startswith("--datasets="):
+            dataset = _normalize_dataset(token.split("=", 1)[1])
+            if dataset:
+                return dataset
+    return _infer_dataset(" ".join(cmdline))
 
 
 def _gpu_token(value: str) -> Optional[int]:

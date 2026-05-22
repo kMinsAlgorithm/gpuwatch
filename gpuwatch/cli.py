@@ -18,8 +18,8 @@ from gpuwatch.view import ViewOptions, apply_view, parse_int_list, parse_str_lis
 
 
 DEFAULT_INTERVAL = 0.25
-SCHEMA_VERSION = "0.2"
-SORT_CHOICES = ("index", "util", "vram", "temp", "mem", "age", "progress", "eta", "run")
+SCHEMA_VERSION = "0.3"
+SORT_CHOICES = ("index", "util", "vram", "temp", "mem", "age", "progress", "eta", "run", "dataset")
 MODE_CHOICES = ("auto", "micro", "wide-short", "compact", "medium", "full")
 BACKEND_CHOICES = ("auto", "nvml", "smi", "fake")
 TOP_COMMAND = "top"
@@ -113,6 +113,7 @@ def _add_view_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--user", default=None, help="filter process user substring")
     parser.add_argument("--cmd", default=None, help="filter process command substring")
     parser.add_argument("--state", default=None, help="training state list")
+    parser.add_argument("--dataset", default=None, help="filter training dataset substring")
     parser.add_argument("--sort", choices=SORT_CHOICES, default="index")
     parser.add_argument("--reverse", action="store_true")
 
@@ -245,7 +246,7 @@ def _print_train_status_table(statuses, errors, explain: bool = False) -> None:
     from rich.table import Table
 
     table = Table(title="Training Status", expand=True)
-    columns = ["GPU", "PID", "Run", "State", "Phase", "Epoch", "Progress", "ETA", "Speed", "HB", "Metric", "Evidence"]
+    columns = ["GPU", "PID", "Run", "Dataset", "State", "Phase", "Epoch", "Progress", "ETA", "Speed", "HB", "Metric", "Evidence"]
     if explain:
         columns.append("Reason")
     for column in columns:
@@ -256,6 +257,7 @@ def _print_train_status_table(statuses, errors, explain: bool = False) -> None:
             str(status.gpu_index) if status.gpu_index is not None else "-",
             str(status.pid) if status.pid is not None else "-",
             _tail_label(status.run_name, 36),
+            status.dataset or "-",
             status.state,
             status.phase,
             status.epoch_label(),
@@ -270,7 +272,7 @@ def _print_train_status_table(statuses, errors, explain: bool = False) -> None:
             row.append(status.state_reason or "-")
         table.add_row(*row)
     if not statuses:
-        empty = ["-", "-", "No training status", "-", "-", "-", "-", "-", "-", "-", "-", "-"]
+        empty = ["-", "-", "No training status", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-"]
         if explain:
             empty.append("-")
         table.add_row(*empty)
@@ -372,6 +374,7 @@ def _view_options(args) -> ViewOptions:
             cmd=getattr(args, "cmd", None),
             states=parse_str_list(getattr(args, "state", None)),
             run=getattr(args, "run", None),
+            dataset=getattr(args, "dataset", None),
             failed_only=bool(getattr(args, "failed_only", False)),
             sort=getattr(args, "sort", "index"),
             reverse=bool(getattr(args, "reverse", False)),
@@ -407,6 +410,7 @@ def _status_to_dict(status) -> dict:
         "pid": status.pid,
         "gpu_index": status.gpu_index,
         "run_name": status.run_name,
+        "dataset": status.dataset,
         "project": status.project,
         "phase": status.phase,
         "epoch": status.epoch,

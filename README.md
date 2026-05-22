@@ -123,7 +123,7 @@ Runs the live monitor. `gpuwatch` without a subcommand is shorthand for
 `gpuwatch top --interval 0.25`, and top options can be passed directly.
 
 ```bash
-gpuwatch [--backend auto|fake] [--interval 0.25] [--plain] [--no-training] [--ascii] [--theme soft-dark|terminal|light] [--mode auto|micro|wide-short|compact|medium|full] [--gpu 0,1] [--pid PID] [--user USER] [--cmd TEXT] [--state running,stalled] [--sort util|vram|age|progress|eta|run] [--reverse] [--root PATH]
+gpuwatch [--backend auto|fake] [--interval 0.25] [--plain] [--no-training] [--ascii] [--theme soft-dark|terminal|light] [--mode auto|micro|wide-short|compact|medium|full] [--gpu 0,1] [--pid PID] [--user USER] [--cmd TEXT] [--state running,stalled] [--dataset nba] [--sort util|vram|age|progress|eta|run|dataset] [--reverse] [--root PATH]
 gpuwatch top [same options]
 ```
 
@@ -136,6 +136,7 @@ gpuwatch --backend fake --theme soft-dark
 gpuwatch --ascii --theme terminal
 gpuwatch --mode wide-short --explain-layout
 gpuwatch --gpu 0,3 --sort eta
+gpuwatch --dataset zara2 --sort dataset
 gpuwatch top --root /data/kmg/Trajectory_Prediction/related_works/My_MART_HIERAR_HRT_v2
 ```
 
@@ -144,7 +145,7 @@ gpuwatch top --root /data/kmg/Trajectory_Prediction/related_works/My_MART_HIERAR
 Prints a single snapshot.
 
 ```bash
-gpuwatch once [--backend auto|fake] [--json] [--no-training] [--ascii] [--theme soft-dark|terminal|light] [--mode auto|micro|wide-short|compact|medium|full] [--gpu 0,1] [--sort util|eta|run] [--root PATH]
+gpuwatch once [--backend auto|fake] [--json] [--no-training] [--ascii] [--theme soft-dark|terminal|light] [--mode auto|micro|wide-short|compact|medium|full] [--gpu 0,1] [--dataset nba] [--sort util|eta|run|dataset] [--root PATH]
 ```
 
 Examples:
@@ -161,7 +162,7 @@ gpuwatch once --backend fake --gpu 1 --json
 Emits JSON snapshots for scripts.
 
 ```bash
-gpuwatch json [--backend auto|fake] [--watch] [--interval 1.0] [--limit N] [--no-training] [--schema-version] [--gpu 0,1] [--sort util|eta|run]
+gpuwatch json [--backend auto|fake] [--watch] [--interval 1.0] [--limit N] [--no-training] [--schema-version] [--gpu 0,1] [--dataset nba] [--sort util|eta|run|dataset]
 ```
 
 Examples:
@@ -172,7 +173,7 @@ gpuwatch json --watch --interval 1.0 --limit 10
 gpuwatch json --watch --limit 1 --no-training
 ```
 
-JSON output includes `schema_version: "0.2"` and training statuses by default. Use
+JSON output includes `schema_version: "0.3"` and training statuses by default. Use
 `--no-training` for a pure GPU snapshot stream.
 
 ### `gpuwatch train-status`
@@ -180,7 +181,7 @@ JSON output includes `schema_version: "0.2"` and training statuses by default. U
 Scans training heartbeats and recent logs.
 
 ```bash
-gpuwatch train-status --root PATH [--backend auto|fake] [--json] [--watch] [--interval 0.25] [--stale-after 120] [--failed-only] [--run TEXT] [--explain]
+gpuwatch train-status --root PATH [--backend auto|fake] [--json] [--watch] [--interval 0.25] [--stale-after 120] [--failed-only] [--run TEXT] [--dataset TEXT] [--explain]
 ```
 
 Example:
@@ -261,7 +262,7 @@ For new training scripts, add `TrainingRun` heartbeat instrumentation:
 ```python
 from gpuwatch import TrainingRun
 
-with TrainingRun("eth_seed1", total_epochs=100, project="trajectory") as run:
+with TrainingRun("eth_seed1", total_epochs=100, dataset="eth", project="trajectory") as run:
     for epoch in range(100):
         run.epoch_start(epoch, total_steps=len(loader))
         for step, batch in enumerate(loader, start=1):
@@ -277,9 +278,10 @@ with TrainingRun("eth_seed1", total_epochs=100, project="trajectory") as run:
         run.epoch_end(epoch)
 ```
 
-`TrainingRun` records `CUDA_VISIBLE_DEVICES`, `RANK`, `LOCAL_RANK`, `WORLD_SIZE`, and
-`NODE_RANK` when they are set. If `CUDA_VISIBLE_DEVICES=2,3` and `LOCAL_RANK=1`, gpuwatch
-binds the run to physical GPU `3`. You can also bind the heartbeat explicitly:
+`TrainingRun` records the optional `dataset` label along with `CUDA_VISIBLE_DEVICES`,
+`RANK`, `LOCAL_RANK`, `WORLD_SIZE`, and `NODE_RANK` when they are set. If
+`CUDA_VISIBLE_DEVICES=2,3` and `LOCAL_RANK=1`, gpuwatch binds the run to physical GPU `3`.
+You can also bind the heartbeat explicitly:
 
 ```python
 with TrainingRun("eth_seed1", total_epochs=100, gpu_index=3) as run:
@@ -287,6 +289,11 @@ with TrainingRun("eth_seed1", total_epochs=100, gpu_index=3) as run:
 ```
 
 `gpuwatch` and `gpuwatch train-status` can also infer progress from recent `.log` files.
+The `Dataset` column means the actual current dataset, not a run-group or GPU-split label.
+It prefers the explicit `TrainingRun(..., dataset="...")` value and falls back to common
+dataset tokens in logs or command lines such as `nba`, `eth`, `hotel`, `univ`, `zara1`,
+and `zara2`. Split labels such as `eth1` or `eth2` should remain in `run_name`; they are
+not reported as datasets.
 By default it looks at active GPU processes, walks up from each process working directory
 or script path to the nearest project marker such as `.git`, `pyproject.toml`, or
 `requirements.txt`, and scans recent logs under that project. You can still pass explicit

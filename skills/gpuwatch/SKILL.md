@@ -40,6 +40,7 @@ Useful filters:
 
 ```bash
 python -m gpuwatch --gpu 0,3 --sort eta
+python -m gpuwatch --dataset zara2 --sort dataset
 python -m gpuwatch once --backend fake --gpu 1 --json
 python -m gpuwatch train-status --failed-only --explain
 ```
@@ -59,7 +60,7 @@ Prefer `TrainingRun` heartbeat instrumentation for new training code:
 ```python
 from gpuwatch import TrainingRun
 
-with TrainingRun("eth_seed1", total_epochs=100, project="trajectory") as run:
+with TrainingRun("eth_seed1", total_epochs=100, dataset="eth", project="trajectory") as run:
     for epoch in range(100):
         run.epoch_start(epoch, total_steps=len(loader))
         for step, batch in enumerate(loader, start=1):
@@ -74,9 +75,9 @@ with TrainingRun("eth_seed1", total_epochs=100, project="trajectory") as run:
         run.epoch_end(epoch)
 ```
 
-`TrainingRun` auto-records GPU/DDP hints from `CUDA_VISIBLE_DEVICES`, `RANK`, `LOCAL_RANK`,
-`WORLD_SIZE`, and `NODE_RANK` when they are set. If a training script selects a device
-internally, pass the physical GPU explicitly:
+`TrainingRun` auto-records the optional `dataset` label and GPU/DDP hints from
+`CUDA_VISIBLE_DEVICES`, `RANK`, `LOCAL_RANK`, `WORLD_SIZE`, and `NODE_RANK` when they are
+set. If a training script selects a device internally, pass the physical GPU explicitly:
 
 ```python
 with TrainingRun("eth_seed1", total_epochs=100, gpu_index=3) as run:
@@ -84,5 +85,6 @@ with TrainingRun("eth_seed1", total_epochs=100, gpu_index=3) as run:
 ```
 
 For existing trajectory experiments, `gpuwatch train-status` scans `run_*.jsonl` heartbeat files and can infer log roots from active GPU process working directories or script paths when they live under a project marker such as `.git`, `pyproject.toml`, or `requirements.txt`. Use `--root ...` for unusual layouts or when no process-derived project marker is available. It reports confidence and evidence; low-confidence rows should be treated as hints, not facts.
+The `Dataset` column means the actual current dataset, not a run-group or GPU-split label. It prefers `TrainingRun(..., dataset="...")` and otherwise falls back to common tokens in logs or command lines; split labels such as `eth1` or `eth2` stay in `run_name`.
 
 See `references/log-status-patterns.md` only when updating parser behavior.

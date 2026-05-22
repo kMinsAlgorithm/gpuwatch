@@ -36,14 +36,14 @@ class CliTests(unittest.TestCase):
     def test_once_json_filter_has_schema_and_training(self):
         result = self.run_cli("once", "--backend", "fake", "--gpu", "1", "--json")
         payload = json.loads(result.stdout)
-        self.assertEqual(payload["schema_version"], "0.2")
+        self.assertEqual(payload["schema_version"], "0.3")
         self.assertEqual([gpu["index"] for gpu in payload["gpus"]], [1])
         self.assertIn("training", payload)
 
     def test_json_watch_includes_and_can_omit_training(self):
         result = self.run_cli("json", "--watch", "--limit", "1", "--backend", "fake")
         payload = json.loads(result.stdout.splitlines()[0])
-        self.assertEqual(payload["schema_version"], "0.2")
+        self.assertEqual(payload["schema_version"], "0.3")
         self.assertIn("training", payload)
 
         result = self.run_cli("json", "--watch", "--limit", "1", "--backend", "fake", "--no-training")
@@ -56,6 +56,7 @@ class CliTests(unittest.TestCase):
         if payload:
             self.assertIn("eta_seconds", payload[0])
             self.assertIn("state_reason", payload[0])
+            self.assertIn("dataset", payload[0])
 
     def test_tail_label_preserves_run_suffix(self):
         label = _tail_label("520caer_prt_v1_20260521_161037_zara2_gpu1", 24)
