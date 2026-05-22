@@ -18,7 +18,10 @@ python -m gpuwatch train-status --root /data/kmg/Trajectory_Prediction/related_w
 python -m gpuwatch doctor --root /data/kmg/Trajectory_Prediction/related_works/My_MART_HIERAR_HRT_v2
 ```
 
-If NVML is unavailable in the current environment, use the deterministic fake backend for UI/debug checks:
+If NVML is unavailable in the current environment, `gpuwatch` and `gpuwatch once` in default
+`auto` mode fall back to the deterministic fake backend for UI/debug checks. Use
+`gpuwatch doctor` when you need the real driver/backend failure. You can also force fake
+explicitly:
 
 ```bash
 python -m gpuwatch once --backend fake
@@ -80,6 +83,6 @@ with TrainingRun("eth_seed1", total_epochs=100, gpu_index=3) as run:
     ...
 ```
 
-For existing trajectory experiments, `gpuwatch train-status --root ...` scans recent `.log` files and `run_*.jsonl` heartbeat files. It reports confidence and evidence; low-confidence rows should be treated as hints, not facts.
+For existing trajectory experiments, `gpuwatch train-status` scans `run_*.jsonl` heartbeat files and can infer log roots from active GPU process working directories or script paths when they live under a project marker such as `.git`, `pyproject.toml`, or `requirements.txt`. Use `--root ...` for unusual layouts or when no process-derived project marker is available. It reports confidence and evidence; low-confidence rows should be treated as hints, not facts.
 
 See `references/log-status-patterns.md` only when updating parser behavior.

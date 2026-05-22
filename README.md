@@ -20,7 +20,8 @@ tables. The default theme is `soft-dark`.
 - Host CPU, RAM, and load average summary.
 - Responsive Rich/Textual UI with `soft-dark`, `terminal`, and `light` themes.
 - ASCII fallback for terminals that do not render Unicode box characters well.
-- Training progress detection from `TrainingRun` heartbeat files and recent `.log` files.
+- Training progress detection from `TrainingRun` heartbeat files, recent `.log` files, and
+  project roots inferred from active GPU process working directories.
 - JSON output for scripting and dashboards.
 
 ## Repository Layout
@@ -47,6 +48,10 @@ gpuwatch/
 - `textual` for the full-screen TUI. It is included in the `tui` extra.
 
 The fake backend works without NVIDIA hardware and is useful for testing the UI.
+When `gpuwatch` or `gpuwatch once` runs in the default `auto` mode and neither NVML nor
+`nvidia-smi` is available, the display falls back to the fake backend so local UI work still
+opens cleanly. Use `gpuwatch doctor` to check the real driver/backend state; doctor does not
+hide backend failures.
 
 ## Installation
 
@@ -85,6 +90,9 @@ Run the full-screen TUI:
 ```bash
 gpuwatch
 ```
+
+On a machine without a loaded NVIDIA driver, this opens with the fake backend instead of
+showing driver errors. The header shows `fake` so demo data is clearly labeled.
 
 Run the Rich plain live view instead of Textual:
 
@@ -278,8 +286,12 @@ with TrainingRun("eth_seed1", total_epochs=100, gpu_index=3) as run:
     ...
 ```
 
-`gpuwatch` and `gpuwatch train-status` can also infer progress from recent `.log` files
-under paths passed with `--root` or the `GPUWATCH_PROJECT_ROOTS` environment variable.
+`gpuwatch` and `gpuwatch train-status` can also infer progress from recent `.log` files.
+By default it looks at active GPU processes, walks up from each process working directory
+or script path to the nearest project marker such as `.git`, `pyproject.toml`, or
+`requirements.txt`, and scans recent logs under that project. You can still pass explicit
+roots with `--root` or `GPUWATCH_PROJECT_ROOTS` when a project has unusual layout or no
+recognizable marker.
 
 ```bash
 export GPUWATCH_PROJECT_ROOTS=/path/to/project1:/path/to/project2

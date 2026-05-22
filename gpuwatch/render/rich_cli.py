@@ -243,12 +243,13 @@ def watch_plain(
     explain_layout: bool = False,
     view_options: Optional[ViewOptions] = None,
     stale_after: float = 900.0,
+    fallback_to_fake: bool = False,
 ) -> None:
     console = Console()
     use_ascii = _console_ascii(console) if ascii_only is None else ascii_only
     with Live(console=console, refresh_per_second=max(1, int(1.0 / max(interval, 0.1))), screen=True) as live:
         while True:
-            snapshot = sample_once(backend=backend)
+            snapshot = sample_once(backend=backend, fallback_to_fake=fallback_to_fake)
             statuses = (
                 training_snapshot(project_roots=list(project_roots), processes=list(snapshot.all_processes()), stale_after=stale_after)
                 if show_training
@@ -1258,7 +1259,7 @@ def _tile_training_label(statuses: List[TrainingStatus]) -> str:
 
 
 def _active_training_statuses(statuses: List[TrainingStatus]) -> List[TrainingStatus]:
-    inactive = {"complete", "failed", "orphaned"}
+    inactive = {"complete", "failed", "orphaned", "unbound"}
     return [status for status in statuses if (status.state or "").lower() not in inactive]
 
 
@@ -1268,7 +1269,7 @@ def _dashboard_training_statuses(statuses: List[TrainingStatus]) -> List[Trainin
 
 
 def _health_training_statuses(statuses: List[TrainingStatus]) -> List[TrainingStatus]:
-    inactive = {"complete", "orphaned"}
+    inactive = {"complete", "orphaned", "unbound"}
     return [status for status in statuses if (status.state or "").lower() not in inactive]
 
 

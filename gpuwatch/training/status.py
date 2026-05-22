@@ -41,6 +41,18 @@ MATCH_TOKEN_STOPWORDS = {
 }
 _LOG_CACHE: Dict[Tuple[Tuple[str, ...], int, float], Tuple[float, List["TrainingStatus"]]] = {}
 _LOG_CACHE_TTL_SECONDS = 15.0
+_PROJECT_MARKER_FILES = (
+    ".git",
+    "pyproject.toml",
+    "setup.py",
+    "setup.cfg",
+    "requirements.txt",
+    "environment.yml",
+    "conda.yml",
+)
+_PROJECT_MARKER_DIRS = ("configs", "config")
+_PATHLIKE_SUFFIXES = (".py", ".sh", ".yaml", ".yml", ".toml", ".json", ".jsonl")
+_MAX_INFERRED_ROOTS = 8
 
 
 @dataclass(frozen=True)
@@ -127,7 +139,8 @@ def snapshot(
         status.pid: status for status in heartbeat_statuses if status.pid is not None
     }
 
-    log_statuses = _cached_log_statuses(project_roots, max_logs=max_logs, stale_after=stale_after)
+    log_roots = _effective_project_roots(project_roots, processes)
+    log_statuses = _cached_log_statuses(log_roots, max_logs=max_logs, stale_after=stale_after)
     if processes:
         bound = []
         bound_pids = set()
@@ -136,7 +149,7 @@ def snapshot(
                 bound.append(_attach_process(by_pid[process.pid], process, 0.95, "heartbeat"))
                 bound_pids.add(process.pid)
                 continue
-            log_status = _best_log_match(process, log_statuses)
+            log_status = _best_log_match(process, log_statuses) if _can_match_training_log(process) else None
             if log_status is not None:
                 bound.append(_attach_process(log_status, process, min(0.82, log_status.confidence), "log-match"))
             else:
@@ -270,6 +283,98 @@ def _log_statuses(project_roots: Iterable[str], max_logs: int, stale_after: floa
             continue
     statuses.sort(key=lambda item: item.stale_seconds if item.stale_seconds is not None else 1e18)
     return statuses
+
+
+def _effective_project_roots(
+    project_roots: Iterable[str],
+    processes: Sequence[GpuProcessSnapshot],
+) -> List[str]:
+    roots: List[str] = []
+    seen = set()
+    for root in list(project_roots) + [str(path) for path in _inferred_project_roots(processes)]:
+        text = str(Path(root).expanduser())
+        if text in seen:
+            continue
+        seen.add(text)
+        roots.append(text)
+    return roots
+
+
+def _inferred_project_roots(processes: Sequence[GpuProcessSnapshot]) -> List[Path]:
+    roots: List[Path] = []
+    seen = set()
+    for process in processes:
+        for candidate in _process_candidate_paths(process):
+            root = _nearest_project_root(candidate)
+            if root is None:
+                continue
+            key = str(root)
+            if key in seen:
+                continue
+            seen.add(key)
+            roots.append(root)
+            if len(roots) >= _MAX_INFERRED_ROOTS:
+                return roots
+    return roots
+
+
+def _process_candidate_paths(process: GpuProcessSnapshot) -> List[Path]:
+    paths: List[Path] = []
+    cwd = Path(process.cwd).expanduser() if process.cwd else None
+    if cwd is not None:
+        paths.append(cwd)
+    for token in process.cmdline:
+        candidate = _cmdline_path_candidate(token, cwd)
+        if candidate is not None:
+            paths.append(candidate)
+    return paths
+
+
+def _cmdline_path_candidate(token: str, cwd: Optional[Path]) -> Optional[Path]:
+    if not token or token.startswith("-") or "://" in token:
+        return None
+    if not (token.endswith(_PATHLIKE_SUFFIXES) or os.sep in token):
+        return None
+    path = Path(token).expanduser()
+    if not path.is_absolute():
+        if cwd is None:
+            return None
+        path = cwd / path
+    return path
+
+
+def _nearest_project_root(path: Path) -> Optional[Path]:
+    try:
+        directory = path if path.is_dir() else path.parent
+    except OSError:
+        directory = path.parent
+    directory = directory.expanduser()
+    for candidate in (directory, *directory.parents):
+        if _has_project_marker(candidate):
+            return candidate
+        if candidate == Path.home() or candidate.parent == candidate:
+            break
+    return None
+
+
+def _has_project_marker(path: Path) -> bool:
+    return any(_path_exists(path / marker) for marker in _PROJECT_MARKER_FILES) or any(
+        _path_is_dir(path / marker) for marker in _PROJECT_MARKER_DIRS
+    )
+
+
+def _path_exists(path: Path) -> bool:
+    try:
+        return path.exists()
+    except OSError:
+        return False
+
+
+def _path_is_dir(path: Path) -> bool:
+    try:
+        return path.is_dir()
+    except OSError:
+        return False
 
 
 def _cached_log_statuses(project_roots: Iterable[str], max_logs: int, stale_after: float) -> List[TrainingStatus]:
@@ -501,6 +606,16 @@ def _best_log_match(
             best = status
             best_score = score
     return best if best_score > 0 else None
+
+
+def _can_match_training_log(process: GpuProcessSnapshot) -> bool:
+    process_type = process.type or ""
+    if "C" in process_type:
+        return True
+    if process_type:
+        return False
+    command = " ".join(process.cmdline).lower()
+    return "python" in command or "torchrun" in command or "accelerate" in command
 
 
 def _infer_run_name(cmdline: Sequence[str]) -> Optional[str]:

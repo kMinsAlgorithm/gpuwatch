@@ -10,7 +10,7 @@ from gpuwatch.backends.nvml import NvmlGpuBackend, NvmlUnavailable
 from gpuwatch.models import SystemSnapshot
 
 
-def sample_once(backend: str = "auto") -> SystemSnapshot:
+def sample_once(backend: str = "auto", fallback_to_fake: bool = False) -> SystemSnapshot:
     host_backend = HostBackend()
     host = host_backend.collect()
     errors = []
@@ -43,8 +43,13 @@ def sample_once(backend: str = "auto") -> SystemSnapshot:
                 backend_name = "nvidia-smi"
             except NvidiaSmiUnavailable as smi_exc:
                 errors.append(str(smi_exc))
-                gpus = ()
-                backend_name = "nvml"
+                if fallback_to_fake:
+                    gpus = FakeGpuBackend().collect(host_backend)
+                    errors = []
+                    backend_name = "fake"
+                else:
+                    gpus = ()
+                    backend_name = "nvml"
 
     return SystemSnapshot(host=host, gpus=tuple(gpus), errors=tuple(errors), backend=backend_name)
 
@@ -53,11 +58,12 @@ def watch(
     interval: float = 1.0,
     backend: str = "auto",
     limit: Optional[int] = None,
+    fallback_to_fake: bool = False,
 ) -> Generator[SystemSnapshot, None, None]:
     count = 0
     while True:
         started = time.monotonic()
-        yield sample_once(backend=backend)
+        yield sample_once(backend=backend, fallback_to_fake=fallback_to_fake)
         count += 1
         if limit is not None and count >= limit:
             break

@@ -131,6 +131,7 @@ def cmd_top(args) -> int:
             display_mode=args.mode,
             explain_layout=args.explain_layout,
             view_options=view_options,
+            fallback_to_fake=True,
         )
         return 0
     try:
@@ -146,6 +147,7 @@ def cmd_top(args) -> int:
             display_mode=args.mode,
             explain_layout=args.explain_layout,
             view_options=view_options,
+            fallback_to_fake=True,
         )
     except RuntimeError as exc:
         console = Console(stderr=True)
@@ -160,12 +162,13 @@ def cmd_top(args) -> int:
             display_mode=args.mode,
             explain_layout=args.explain_layout,
             view_options=view_options,
+            fallback_to_fake=True,
         )
     return 0
 
 
 def cmd_once(args) -> int:
-    snapshot = sample_once(backend=args.backend)
+    snapshot = sample_once(backend=args.backend, fallback_to_fake=True)
     statuses = (
         training_snapshot(project_roots=_roots(args.root), processes=list(snapshot.all_processes()))
         if not args.no_training
@@ -294,7 +297,7 @@ def cmd_doctor(args) -> int:
     for item, state, note in rows:
         table.add_row(item, state, note)
     console.print(table)
-    snapshot = sample_once(backend=args.backend)
+    snapshot = sample_once(backend=args.backend, fallback_to_fake=False)
     exit_code = 0
     if snapshot.errors:
         for error in snapshot.errors:

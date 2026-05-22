@@ -2,9 +2,10 @@ import tempfile
 import unittest
 import os
 from pathlib import Path
+from unittest.mock import patch
 
 from gpuwatch.models import GpuProcessSnapshot
-from gpuwatch.training.status import _best_log_match, _parse_heartbeat, parse_log, snapshot
+from gpuwatch.training.status import _best_log_match, _parse_heartbeat, _has_project_marker, parse_log, snapshot
 from gpuwatch.training.tracker import TrainingRun
 
 
@@ -166,6 +167,64 @@ class TrainingStatusTests(unittest.TestCase):
             match = _best_log_match(process, statuses)
             self.assertIsNotNone(match)
             self.assertIn("zara2_gpu1", match.log_path)
+
+    def test_snapshot_infers_project_root_from_process_cwd(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".git").mkdir()
+            workdir = root / "scripts"
+            workdir.mkdir()
+            log_dir = root / "experiments" / "runs"
+            log_dir.mkdir(parents=True)
+            log = log_dir / "auto_run_gpu0.log"
+            log.write_text("[INFO][auto_run][Epoch 3/9] score=0.7\n", encoding="utf-8")
+            process = GpuProcessSnapshot(
+                pid=2991475,
+                gpu_index=0,
+                gpu_uuid="GPU-test",
+                cmdline=("python3", "train.py", "--run-name", "auto_run"),
+                cwd=str(workdir),
+            )
+
+            statuses = snapshot(project_roots=[], processes=[process])
+
+            self.assertEqual(len(statuses), 1)
+            status = statuses[0]
+            self.assertEqual(status.pid, process.pid)
+            self.assertEqual(status.gpu_index, 0)
+            self.assertEqual(status.run_name, "auto_run")
+            self.assertEqual(status.epoch, 3)
+            self.assertEqual(status.max_epoch, 9)
+            self.assertIn("log-match", status.evidence)
+
+    def test_project_marker_check_ignores_permission_errors(self):
+        with patch("gpuwatch.training.status.Path.exists", side_effect=PermissionError("denied")):
+            with patch("gpuwatch.training.status.Path.is_dir", side_effect=PermissionError("denied")):
+                self.assertFalse(_has_project_marker(Path("/run/user/126/gdm")))
+
+    def test_snapshot_does_not_bind_graphics_processes_to_training_logs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".git").mkdir()
+            log = root / "auto_run_gpu0.log"
+            log.write_text("[INFO][auto_run][Epoch 3/9] score=0.7\n", encoding="utf-8")
+            process = GpuProcessSnapshot(
+                pid=5017,
+                gpu_index=0,
+                gpu_uuid="GPU-test",
+                type="G",
+                name="Xorg",
+                cmdline=("/usr/lib/xorg/Xorg", "-auth", "/run/user/126/gdm/Xauthority"),
+                cwd=str(root),
+            )
+
+            statuses = snapshot(project_roots=[], processes=[process])
+
+            self.assertEqual(len(statuses), 1)
+            status = statuses[0]
+            self.assertEqual(status.pid, process.pid)
+            self.assertEqual(status.state, "unbound")
+            self.assertNotIn("log-match", status.evidence)
 
     def test_training_run_heartbeat(self):
         with tempfile.TemporaryDirectory() as tmp:

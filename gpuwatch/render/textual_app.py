@@ -20,6 +20,7 @@ def run_textual(
     display_mode: str = "auto",
     explain_layout: bool = False,
     view_options: ViewOptions = None,
+    fallback_to_fake: bool = False,
 ) -> None:
     try:
         from textual.app import App, ComposeResult
@@ -43,7 +44,7 @@ def run_textual(
         snapshot_text = reactive("")
 
         def render(self):
-            snapshot = sample_once(backend=backend)
+            snapshot = sample_once(backend=backend, fallback_to_fake=fallback_to_fake)
             statuses = (
                 training_snapshot(project_roots=roots, processes=list(snapshot.all_processes()))
                 if show_training
