@@ -134,6 +134,14 @@ class NvmlGpuBackend:
                     "nvmlDeviceGetGraphicsRunningProcesses",
                 ),
             ),
+            (
+                "M",
+                (
+                    "nvmlDeviceGetMPSComputeRunningProcesses_v3",
+                    "nvmlDeviceGetMPSComputeRunningProcesses_v2",
+                    "nvmlDeviceGetMPSComputeRunningProcesses",
+                ),
+            ),
         ):
             infos = None
             for function_name in function_names:
@@ -149,8 +157,9 @@ class NvmlGpuBackend:
                 pid = int(getattr(info, "pid"))
                 used_memory = _bytes_to_mb(getattr(info, "usedGpuMemory", None))
                 record = by_pid.setdefault(pid, {"memory": 0, "type": set()})
+                # The same allocation is reported once per list (C/G/M), so keep the max.
                 if used_memory is not None:
-                    record["memory"] = int(record["memory"]) + used_memory
+                    record["memory"] = max(int(record["memory"]), used_memory)
                 record_type = record["type"]
                 if hasattr(record_type, "add"):
                     record_type.add(process_type)
@@ -158,7 +167,7 @@ class NvmlGpuBackend:
         snapshots = []
         for pid, record in sorted(by_pid.items()):
             process_types = record.get("type")
-            type_label = "+".join(sorted(process_types)) if process_types else None
+            type_label = "+".join(sorted(process_types, key="MCG".index)) if process_types else None
             snapshots.append(
                 host_backend.enrich_process(
                     pid=pid,

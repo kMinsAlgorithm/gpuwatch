@@ -5,6 +5,7 @@ from dataclasses import replace
 from rich.cells import cell_len
 from rich.console import Console
 
+from gpuwatch.models import GpuProcessSnapshot
 from gpuwatch.render.rich_cli import THEMES, render_dashboard
 from gpuwatch.sampler import sample_once
 from gpuwatch.training.status import TrainingStatus
@@ -48,7 +49,112 @@ def snapshot_with_gpus(count):
     return replace(snapshot, gpus=tuple(gpus))
 
 
+def mps_training_snapshot(run_count):
+    snapshot = snapshot_with_gpus(1)
+    workloads = tuple(
+        GpuProcessSnapshot(
+            pid=300000 + index,
+            gpu_index=0,
+            gpu_uuid="GPU-TEST-0",
+            type="M+C",
+            name="python3",
+            cmdline=("python3", "train.py"),
+            gpu_memory_mb=1000,
+            cpu_percent=90.0,
+        )
+        for index in range(run_count)
+    )
+    desktop = GpuProcessSnapshot(pid=2147, gpu_index=0, gpu_uuid="GPU-TEST-0", type="G", name="Xorg", gpu_memory_mb=200)
+    snapshot = replace(snapshot, gpus=(replace(snapshot.gpus[0], processes=(desktop,) + workloads),))
+    statuses = [
+        TrainingStatus(
+            pid=process.pid,
+            gpu_index=0,
+            run_name=f"8_37_slot_mode_futures_v1_run{index}_s1",
+            state="running",
+            phase="train",
+            epoch=3,
+            max_epoch=150,
+        )
+        for index, process in enumerate(workloads)
+    ]
+    return snapshot, statuses
+
+
 class RenderTests(unittest.TestCase):
+    def test_full_layout_summarizes_training_processes_instead_of_repeating_them(self):
+        snapshot, statuses = mps_training_snapshot(12)
+
+        text = render_text(snapshot, statuses=statuses, width=184, height=33, display_mode="full")
+
+        training_section = text[: text.index("GPU Processes")]
+        process_section = text[text.index("GPU Processes"):]
+        for status in statuses:
+            self.assertIn(str(status.pid), training_section)
+            self.assertNotIn(str(status.pid), process_section)
+        self.assertIn("12 procs", process_section)
+        self.assertIn("training processes", process_section)
+        self.assertIn("1000M", training_section)
+        self.assertLessEqual(len(text.rstrip("\n").splitlines()), 33)
+
+    def test_host_header_shows_cpu_temperature_next_to_cpu_usage(self):
+        snapshot = snapshot_with_gpus(1)
+        snapshot = replace(snapshot, host=replace(snapshot.host, cpu_percent=98.0, cpu_temperature_c=69.4))
+        for width, height, mode in ((184, 33, "full"), (100, 18, "compact")):
+            text = render_text(snapshot, width=width, height=height, display_mode=mode)
+            self.assertIn("CPU 98% 69C", text)
+
+    def test_host_header_omits_cpu_temperature_when_unavailable(self):
+        snapshot = snapshot_with_gpus(1)
+        snapshot = replace(snapshot, host=replace(snapshot.host, cpu_percent=50.0, cpu_temperature_c=None))
+        text = render_text(snapshot, width=184, height=33, display_mode="full")
+        self.assertIn("CPU 50% | RAM", text)
+
+    def test_training_table_hoists_shared_run_prefix(self):
+        snapshot, statuses = mps_training_snapshot(3)
+
+        text = render_text(snapshot, statuses=statuses, width=150, height=34, display_mode="full")
+
+        self.assertIn("run 8_37_slot_mode_futures_v1_*", text)
+        self.assertIn("run0_s1", text)
+        self.assertIn("run2_s1", text)
+
+    def test_full_layout_stays_within_height_on_narrower_terminals(self):
+        snapshot, statuses = mps_training_snapshot(12)
+        for width, height in ((140, 31), (150, 34), (184, 45)):
+            text = render_text(snapshot, statuses=statuses, width=width, height=height, display_mode="full")
+            self.assertLessEqual(len(text.rstrip("\n").splitlines()), height, (width, height))
+
+    def test_process_table_lists_workloads_first_and_collapses_desktop(self):
+        snapshot = snapshot_with_gpus(1)
+        desktop = [
+            GpuProcessSnapshot(pid=pid, gpu_index=0, gpu_uuid="GPU-TEST-0", type="G", name=name, gpu_memory_mb=50)
+            for pid, name in ((2147, "Xorg"), (2334, "gnome-shell"))
+        ]
+        mps_server = GpuProcessSnapshot(
+            pid=306958, gpu_index=0, gpu_uuid="GPU-TEST-0", type="C", name="nvidia-cuda-mps-server", gpu_memory_mb=52
+        )
+        workload = GpuProcessSnapshot(
+            pid=306715,
+            gpu_index=0,
+            gpu_uuid="GPU-TEST-0",
+            type="M+C",
+            name="python3",
+            cmdline=("/home/u/envs/x/bin/python3", "/home/u/proj/train_eth.py", "--seed", "1"),
+            gpu_memory_mb=900,
+        )
+        gpu = replace(snapshot.gpus[0], processes=tuple(desktop + [mps_server, workload]))
+        snapshot = replace(snapshot, gpus=(gpu,))
+
+        text = render_text(snapshot, width=184, height=40, display_mode="full")
+
+        process_section = text[text.index("GPU Processes"):]
+        self.assertLess(process_section.index("306715"), process_section.index("306958"))
+        self.assertIn("python3 train_eth.py --seed 1", process_section)
+        self.assertIn("desktop/graphics: Xorg, gnome-shell", process_section)
+        self.assertNotIn("2147", process_section)
+        self.assertIn("1 compute (MPS): 306715 | mps-server | 2 desktop", text)
+
     def test_micro_unicode_cards_have_visible_boundaries(self):
         text = render_text(snapshot_with_gpus(8), width=204, height=8, ascii_only=False, display_mode="micro")
         self.assertIn("┌ G0", text)

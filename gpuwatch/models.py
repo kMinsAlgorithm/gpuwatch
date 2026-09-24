@@ -36,6 +36,29 @@ class GpuProcessSnapshot:
             return " ".join(self.cmdline)
         return self.name or ""
 
+    @property
+    def is_graphics_only(self) -> bool:
+        """Display/desktop clients (Xorg, gnome-shell, browsers) that never run training."""
+        types = set((self.type or "").split("+"))
+        return "G" in types and "C" not in types
+
+    @property
+    def is_mps_server(self) -> bool:
+        return "nvidia-cuda-mps-server" in (self.name or self.command)
+
+    @property
+    def is_mps_client(self) -> bool:
+        return "M" in (self.type or "").split("+")
+
+    @property
+    def display_priority(self) -> int:
+        """Lower sorts first: workloads, then MPS infrastructure, then desktop graphics."""
+        if self.is_graphics_only:
+            return 2
+        if self.is_mps_server:
+            return 1
+        return 0
+
     def to_dict(self) -> Dict[str, Any]:
         return _tuple_to_list(asdict(self))
 
@@ -55,6 +78,10 @@ class GpuSnapshot:
     power_draw_w: Optional[float] = None
     power_limit_w: Optional[float] = None
     processes: Tuple[GpuProcessSnapshot, ...] = field(default_factory=tuple)
+
+    @property
+    def mps_active(self) -> bool:
+        return any(process.is_mps_server or process.is_mps_client for process in self.processes)
 
     @property
     def memory_percent(self) -> Optional[float]:
@@ -77,6 +104,7 @@ class HostSnapshot:
     memory_percent: Optional[float] = None
     memory_used_mb: Optional[int] = None
     memory_total_mb: Optional[int] = None
+    cpu_temperature_c: Optional[float] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return _tuple_to_list(asdict(self))

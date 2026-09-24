@@ -270,11 +270,19 @@ class TrainingStatusTests(unittest.TestCase):
 
             statuses = snapshot(project_roots=[], processes=[process])
 
-            self.assertEqual(len(statuses), 1)
-            status = statuses[0]
-            self.assertEqual(status.pid, process.pid)
-            self.assertEqual(status.state, "unbound")
-            self.assertNotIn("log-match", status.evidence)
+            self.assertEqual(statuses, [])
+
+    def test_snapshot_skips_mps_server_process(self):
+        process = GpuProcessSnapshot(
+            pid=306958,
+            gpu_index=0,
+            gpu_uuid="GPU-test",
+            type="C",
+            name="nvidia-cuda-mps-server",
+            cmdline=("nvidia-cuda-mps-server",),
+        )
+
+        self.assertEqual(snapshot(project_roots=[], processes=[process]), [])
 
     def test_training_run_heartbeat(self):
         with tempfile.TemporaryDirectory() as tmp:

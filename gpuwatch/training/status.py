@@ -151,6 +151,8 @@ def snapshot(
                 bound.append(_attach_process(by_pid[process.pid], process, 0.95, "heartbeat"))
                 bound_pids.add(process.pid)
                 continue
+            if process.is_graphics_only or process.is_mps_server:
+                continue
             log_status = _best_log_match(process, log_statuses) if _can_match_training_log(process) else None
             if log_status is not None:
                 bound.append(_attach_process(log_status, process, min(0.82, log_status.confidence), "log-match"))

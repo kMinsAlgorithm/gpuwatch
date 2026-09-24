@@ -39,6 +39,16 @@ class ViewTests(unittest.TestCase):
         _snapshot, filtered_statuses = apply_view(snapshot, statuses, ViewOptions(dataset="nba", sort="dataset"))
         self.assertEqual([status.run_name for status in filtered_statuses], ["b"])
 
+    def test_default_sort_puts_training_before_unbound_processes(self):
+        snapshot = sample_once(backend="fake")
+        statuses = [
+            TrainingStatus(pid=10, gpu_index=0, state="unbound"),
+            TrainingStatus(pid=300000, gpu_index=0, run_name="train", state="running"),
+            TrainingStatus(pid=300001, gpu_index=0, run_name="stuck", state="stalled"),
+        ]
+        _snapshot, sorted_statuses = apply_view(snapshot, statuses, ViewOptions())
+        self.assertEqual([status.pid for status in sorted_statuses], [300001, 300000, 10])
+
 
 if __name__ == "__main__":
     unittest.main()

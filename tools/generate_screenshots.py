@@ -185,6 +185,7 @@ def demo_snapshot() -> SystemSnapshot:
         memory_percent=20.0,
         memory_used_mb=23900,
         memory_total_mb=125600,
+        cpu_temperature_c=58.0,
     )
     return SystemSnapshot(host=host, gpus=tuple(gpus), errors=(), backend="nvml")
 

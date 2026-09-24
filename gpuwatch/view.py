@@ -126,8 +126,16 @@ def _sort_statuses(statuses: list[TrainingStatus], options: ViewOptions) -> list
     elif sort == "dataset":
         key = lambda status: ((status.dataset or "").lower(),)
     else:
-        key = lambda status: _none_last(status.gpu_index)
+        key = lambda status: _none_last(status.gpu_index) + (_state_rank(status),)
     return sorted(statuses, key=lambda status: (key(status), status.pid or -1), reverse=options.reverse)
+
+
+# Attention-worthy runs first, then healthy training, then processes without training info.
+_STATE_RANK = {"stalled": 0, "failed": 0, "running": 1, "unbound": 3}
+
+
+def _state_rank(status: TrainingStatus) -> int:
+    return _STATE_RANK.get((status.state or "").lower(), 2)
 
 
 def _none_last(value) -> tuple[int, object]:
