@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Iterable
 
 from rich.text import Text
 
 from gpuwatch.render.rich_cli import THEMES, render_dashboard
-from gpuwatch.sampler import sample_once
+from gpuwatch.sampler import sample_once, with_training_storage
 from gpuwatch.training.status import snapshot as training_snapshot
 from gpuwatch.view import ViewOptions, apply_view
 
@@ -40,18 +41,29 @@ def run_textual(
     css_muted = render_theme.muted or css_text
     css_warn = render_theme.warn or css_text
 
+    # Textual calls render() on every resize; keep system I/O on the timer instead.
+    def collect_snapshot():
+        snapshot = sample_once(backend=backend, fallback_to_fake=fallback_to_fake)
+        statuses = (
+            training_snapshot(project_roots=roots, processes=list(snapshot.all_processes()))
+            if show_training
+            else []
+        )
+        if view_options is not None:
+            snapshot, statuses = apply_view(snapshot, statuses, view_options)
+        return with_training_storage(snapshot, statuses, roots), statuses
+
     class Dashboard(Static):
-        snapshot_text = reactive("")
+        snapshot_data = None
+
+        def show_snapshot(self, snapshot, statuses) -> None:
+            self.snapshot_data = (snapshot, statuses)
+            self.refresh()
 
         def render(self):
-            snapshot = sample_once(backend=backend, fallback_to_fake=fallback_to_fake)
-            statuses = (
-                training_snapshot(project_roots=roots, processes=list(snapshot.all_processes()))
-                if show_training
-                else []
-            )
-            if view_options is not None:
-                snapshot, statuses = apply_view(snapshot, statuses, view_options)
+            if self.snapshot_data is None:
+                return Text("Collecting GPU status...", style=f"{css_muted} on {css_background}")
+            snapshot, statuses = self.snapshot_data
             width = max(24, self.size.width - 80)
             return render_dashboard(
                 snapshot,
@@ -101,6 +113,7 @@ def run_textual(
         ]
 
         paused = reactive(False)
+        sampling = False
 
         def compose(self) -> ComposeResult:
             with Container(id="root"):
@@ -109,10 +122,18 @@ def run_textual(
 
         def on_mount(self) -> None:
             self.set_interval(interval, self.refresh_dashboard)
+            self.call_later(self.refresh_dashboard)
 
-        def refresh_dashboard(self) -> None:
-            if not self.paused:
-                self.query_one(Dashboard).refresh()
+        async def refresh_dashboard(self) -> None:
+            if self.paused or self.sampling:
+                return
+            self.sampling = True
+            try:
+                snapshot, statuses = await asyncio.to_thread(collect_snapshot)
+                if not self.paused:
+                    self.query_one(Dashboard).show_snapshot(snapshot, statuses)
+            finally:
+                self.sampling = False
 
         def action_toggle_pause(self) -> None:
             self.paused = not self.paused

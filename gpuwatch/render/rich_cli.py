@@ -14,9 +14,9 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from gpuwatch.models import GpuProcessSnapshot, SystemSnapshot
-from gpuwatch.render.formatters import bar, clamp_cells, clamp_text, mb, na, percent, seconds
-from gpuwatch.sampler import sample_once
+from gpuwatch.models import GpuProcessSnapshot, StorageSnapshot, SystemSnapshot
+from gpuwatch.render.formatters import bar, bytes_size, clamp_cells, clamp_text, mb, na, percent, seconds
+from gpuwatch.sampler import sample_once, with_training_storage
 from gpuwatch.training.status import TrainingStatus, snapshot as training_snapshot
 from gpuwatch.view import ViewOptions, apply_view
 
@@ -203,7 +203,7 @@ def render_dashboard(
     else:
         process_rows = _row_budget(height, reserved=8, fallback=12)
     renderables = [
-        _host_panel(snapshot, render_theme),
+        _host_panel(snapshot, render_theme, width),
     ]
     if include_training:
         renderables.append(
@@ -271,16 +271,18 @@ def watch_plain(
 ) -> None:
     console = Console()
     use_ascii = _console_ascii(console) if ascii_only is None else ascii_only
+    roots = list(project_roots)
     with Live(console=console, refresh_per_second=max(1, int(1.0 / max(interval, 0.1))), screen=True) as live:
         while True:
             snapshot = sample_once(backend=backend, fallback_to_fake=fallback_to_fake)
             statuses = (
-                training_snapshot(project_roots=list(project_roots), processes=list(snapshot.all_processes()), stale_after=stale_after)
+                training_snapshot(project_roots=roots, processes=list(snapshot.all_processes()), stale_after=stale_after)
                 if show_training
                 else []
             )
             if view_options is not None:
                 snapshot, statuses = apply_view(snapshot, statuses, view_options)
+            snapshot = with_training_storage(snapshot, statuses, roots)
             live.update(
                 render_dashboard(
                     snapshot,
@@ -342,7 +344,7 @@ def _layout_explain_line(decision: LayoutDecision, width: Optional[int], theme: 
 
 # Lines a bordered table spends on title, borders and header, on top of its rows.
 _TABLE_CHROME_LINES = 5
-_PANEL_LINES = 3
+_PANEL_LINES = 4
 
 
 def _full_row_split(
@@ -690,14 +692,44 @@ def _medium_dashboard(
 def _host_line(snapshot: SystemSnapshot, width: Optional[int], theme: RenderTheme) -> Text:
     host = snapshot.host
     load = ",".join(f"{item:.1f}" for item in host.load_avg[:3]) if host.load_avg else "N/A"
-    text = (
-        f"gpuwatch {host.hostname} {snapshot.backend} "
-        f"CPU {percent(host.cpu_percent)}{_cpu_temp_suffix(host.cpu_temperature_c)} RAM {percent(host.memory_percent)} "
-        f"load {load}"
-    )
+    text = f"gpuwatch {host.hostname} {snapshot.backend} CPU {percent(host.cpu_percent)}{_cpu_temp_suffix(host.cpu_temperature_c)} RAM {percent(host.memory_percent)}"
+    if host.storage is not None:
+        storage = host.storage
+        detail = f"Disk {bytes_size(storage.free_bytes)} free"
+        if width is None or width >= 120:
+            detail = f"Disk {storage.mountpoint} {bar(storage.used_percent, 10)} {bytes_size(storage.free_bytes)} free"
+        text += f" | {detail}"
+    if host.storage is None or width is None or width >= 160:
+        text += f" load {load}"
+    if host.storage is not None and width is not None and cell_len(text) > width - 1:
+        text = f"CPU {percent(host.cpu_percent)} RAM {percent(host.memory_percent)} | Disk {bytes_size(host.storage.free_bytes)} free"
+        if cell_len(text) > width - 1:
+            text = f"Disk {bytes_size(host.storage.free_bytes)} free"
     line = _styled_line(clamp_text(text, max(20, (width or 80) - 1)), width, theme, "header")
     _stylize_cpu_temp(line, host.cpu_temperature_c, theme, theme.background)
+    _stylize_storage(line, host.storage, theme, theme.background)
     return line
+
+
+def _storage_role(storage: Optional[StorageSnapshot]) -> Optional[str]:
+    if storage is None or not storage.total_bytes:
+        return None
+    free_percent = storage.free_bytes / storage.total_bytes * 100.0
+    if free_percent <= 5:
+        return "crit"
+    if free_percent <= 15:
+        return "warn"
+    return None
+
+
+def _stylize_storage(line: Text, storage: Optional[StorageSnapshot], theme: RenderTheme, bg: str) -> None:
+    role = _storage_role(storage)
+    if role is None:
+        return
+    start = line.plain.find("Disk ")
+    if start >= 0:
+        end = line.plain.find(" load ", start)
+        line.stylize(_role_style(theme, role, bg=bg, bold=True), start, end if end >= 0 else len(line.plain))
 
 
 def _cpu_temp_suffix(temperature_c: Optional[float]) -> str:
@@ -1105,7 +1137,7 @@ def _micro_training_table(statuses: List[TrainingStatus], max_rows: int, theme: 
     return table
 
 
-def _host_panel(snapshot: SystemSnapshot, theme: RenderTheme) -> Panel:
+def _host_panel(snapshot: SystemSnapshot, theme: RenderTheme, width: Optional[int]) -> Panel:
     host = snapshot.host
     load = " ".join(f"{item:.2f}" for item in host.load_avg) if host.load_avg else "N/A"
     text = (
@@ -1115,8 +1147,19 @@ def _host_panel(snapshot: SystemSnapshot, theme: RenderTheme) -> Panel:
     )
     line = Text(text, style=theme.surface_style)
     _stylize_cpu_temp(line, host.cpu_temperature_c, theme, theme.surface)
+    lines = [line]
+    if host.storage is not None:
+        storage = host.storage
+        detail = (
+            f"Disk {storage.mountpoint} {bar(storage.used_percent, 18)} "
+            f"{percent(storage.used_percent)} used | {bytes_size(storage.free_bytes)} free "
+            f"of {bytes_size(storage.total_bytes)}"
+        )
+        storage_line = Text(clamp_text(detail, max(20, (width or 132) - 5)), style=theme.surface_style)
+        _stylize_storage(storage_line, storage, theme, theme.surface)
+        lines.append(storage_line)
     return Panel(
-        line,
+        Group(*lines),
         title="gpuwatch",
         padding=(0, 1),
         style=theme.surface_style,
@@ -1246,7 +1289,9 @@ def _process_table(
             clamp_text(_display_command(process), max_command_width),
         )
         rows += 1
-    hidden = max(0, len(processes) - process_budget) + hidden_graphics
+    hidden_processes = max(0, len(processes) - process_budget)
+    # The GPU table already counts desktop clients beside the training summary.
+    hidden = hidden_processes + (hidden_graphics if hidden_processes or rows == 0 else 0)
     if hidden:
         table.add_row("...", f"+{hidden}", "", "", "", "", "", "", "", "")
     for gpu_index, count, memory_mb, names in graphics_rows:

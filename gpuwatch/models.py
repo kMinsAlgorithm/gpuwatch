@@ -96,6 +96,20 @@ class GpuSnapshot:
 
 
 @dataclass(frozen=True)
+class StorageSnapshot:
+    mountpoint: str
+    used_bytes: int
+    total_bytes: int
+    free_bytes: int
+
+    @property
+    def used_percent(self) -> Optional[float]:
+        if not self.total_bytes:
+            return None
+        return self.used_bytes / self.total_bytes * 100.0
+
+
+@dataclass(frozen=True)
 class HostSnapshot:
     timestamp: float
     hostname: str
@@ -105,6 +119,7 @@ class HostSnapshot:
     memory_used_mb: Optional[int] = None
     memory_total_mb: Optional[int] = None
     cpu_temperature_c: Optional[float] = None
+    storage: Optional[StorageSnapshot] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return _tuple_to_list(asdict(self))

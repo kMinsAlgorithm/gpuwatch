@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import time
+from dataclasses import replace
+from pathlib import Path
 from typing import Generator, Iterable, Optional
 
 from gpuwatch.backends.fake import FakeGpuBackend
-from gpuwatch.backends.host import HostBackend
+from gpuwatch.backends.host import HostBackend, collect_storage
 from gpuwatch.backends.nvidia_smi import NvidiaSmiGpuBackend, NvidiaSmiUnavailable
 from gpuwatch.backends.nvml import NvmlGpuBackend, NvmlUnavailable
 from gpuwatch.models import SystemSnapshot
@@ -73,3 +75,33 @@ def watch(
 
 def collect_processes(snapshot: SystemSnapshot) -> Iterable:
     return snapshot.all_processes()
+
+
+def with_training_storage(snapshot: SystemSnapshot, statuses: Iterable, project_roots: Iterable[str] = ()) -> SystemSnapshot:
+    """Prefer the volume receiving checkpoints or logs over the launch directory."""
+    statuses = sorted(statuses, key=lambda status: (getattr(status, "state", "") or "").lower() in {"complete", "orphaned"})
+    roots = list(project_roots)
+    process_dirs = [process.cwd for process in snapshot.all_processes() if process.cwd]
+    fallback_base = roots[0] if roots else process_dirs[0] if process_dirs else None
+    candidates = []
+    for status in statuses:
+        checkpoint = getattr(status, "checkpoint_path", None)
+        if checkpoint:
+            checkpoint_path = Path(checkpoint).expanduser()
+            project = getattr(status, "project", None)
+            if not checkpoint_path.is_absolute():
+                base = project if project and Path(project).is_absolute() else fallback_base
+                if base:
+                    checkpoint_path = Path(base) / checkpoint_path
+            candidates.append(str(checkpoint_path))
+    for status in statuses:
+        log_path = getattr(status, "log_path", None) or getattr(status, "events_path", None)
+        if log_path:
+            candidates.append(log_path)
+    candidates.extend(roots)
+    candidates.extend(process_dirs)
+    for path in candidates:
+        storage = collect_storage(path)
+        if storage is not None:
+            return replace(snapshot, host=replace(snapshot.host, storage=storage))
+    return snapshot

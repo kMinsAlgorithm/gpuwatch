@@ -12,7 +12,7 @@ from typing import Iterable, List
 from rich.console import Console
 
 from gpuwatch.render.rich_cli import print_once, watch_plain
-from gpuwatch.sampler import sample_once, watch
+from gpuwatch.sampler import sample_once, watch, with_training_storage
 from gpuwatch.training.status import snapshot as training_snapshot
 from gpuwatch.view import ViewOptions, apply_view, parse_int_list, parse_str_list
 
@@ -176,6 +176,7 @@ def cmd_once(args) -> int:
         else []
     )
     snapshot, statuses = apply_view(snapshot, statuses, _view_options(args))
+    snapshot = with_training_storage(snapshot, statuses, _roots(args.root))
     if args.json:
         payload = _snapshot_payload(snapshot, statuses, include_training=not args.no_training)
         print(json.dumps(payload, sort_keys=True))
@@ -205,6 +206,7 @@ def cmd_json(args) -> int:
                 else []
             )
             snapshot, statuses = apply_view(snapshot, statuses, view_options)
+            snapshot = with_training_storage(snapshot, statuses, _roots(args.root))
             print(json.dumps(_snapshot_payload(snapshot, statuses, include_training=not args.no_training), sort_keys=True), flush=True)
     else:
         snapshot = sample_once(backend=args.backend)
@@ -214,6 +216,7 @@ def cmd_json(args) -> int:
             else []
         )
         snapshot, statuses = apply_view(snapshot, statuses, view_options)
+        snapshot = with_training_storage(snapshot, statuses, _roots(args.root))
         print(json.dumps(_snapshot_payload(snapshot, statuses, include_training=not args.no_training), sort_keys=True))
     return 0
 
@@ -230,7 +233,8 @@ def cmd_train_status(args) -> int:
         if args.json:
             print(json.dumps([_status_to_dict(status) for status in statuses_view], sort_keys=True), flush=True)
         else:
-            _print_train_status_table(statuses_view, snapshot_view.errors, explain=args.explain)
+            snapshot_view = with_training_storage(snapshot_view, statuses_view, _roots(args.root))
+            _print_train_status_table(statuses_view, snapshot_view.errors, snapshot_view.host.storage, explain=args.explain)
 
     if args.watch:
         while True:
@@ -241,9 +245,20 @@ def cmd_train_status(args) -> int:
     return 0
 
 
-def _print_train_status_table(statuses, errors, explain: bool = False) -> None:
+def _print_train_status_table(statuses, errors, storage=None, explain: bool = False) -> None:
     console = Console()
     from rich.table import Table
+    from rich.text import Text
+    from gpuwatch.render.formatters import bar, bytes_size, percent
+
+    if storage is not None:
+        label = (
+            f"Disk {storage.mountpoint} {bar(storage.used_percent, 18)} "
+            f"{percent(storage.used_percent)} used | {bytes_size(storage.free_bytes)} free of {bytes_size(storage.total_bytes)}"
+        )
+        free_percent = storage.free_bytes / storage.total_bytes * 100 if storage.total_bytes else 100
+        style = "bold red" if free_percent <= 5 else "bold yellow" if free_percent <= 15 else ""
+        console.print(Text(label, style=style))
 
     table = Table(title="Training Status", expand=True)
     columns = ["GPU", "PID", "Run", "Dataset", "State", "Phase", "Epoch", "Progress", "ETA", "Speed", "HB", "Metric", "Evidence"]

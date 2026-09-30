@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from gpuwatch.models import GpuProcessSnapshot
-from gpuwatch.training.status import _best_log_match, _parse_heartbeat, _has_project_marker, parse_log, snapshot
+from gpuwatch.training.status import _best_log_match, _parse_heartbeat, _has_project_marker, _tail_text, parse_log, snapshot
 from gpuwatch.training.tracker import TrainingRun
 
 
@@ -382,6 +382,31 @@ class TrainingStatusTests(unittest.TestCase):
             self.assertEqual(status.run_name, "partial")
             self.assertEqual(status.epoch, 4)
             self.assertEqual(status.step, 2)
+
+    def test_heartbeat_cache_refreshes_age_and_reloads_changed_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / f"run_{os.getpid()}.jsonl"
+            path.write_text(
+                '{"event": "run_start", "pid": %d, "run_name": "cached", "time": 1000.0}\n' % os.getpid(),
+                encoding="utf-8",
+            )
+            with patch("gpuwatch.training.status._tail_text", wraps=_tail_text) as read_tail:
+                with patch("gpuwatch.training.status.time.time", return_value=1001.0):
+                    first = _parse_heartbeat(path, stale_after=5)
+                with patch("gpuwatch.training.status.time.time", return_value=1010.0):
+                    second = _parse_heartbeat(path, stale_after=5)
+                self.assertEqual(read_tail.call_count, 1)
+                self.assertEqual(first.state, "running")
+                self.assertEqual(second.state, "stalled")
+                self.assertEqual(second.age_seconds, 10.0)
+
+                with path.open("a", encoding="utf-8") as handle:
+                    handle.write('{"event": "step", "pid": %d, "epoch": 1, "time": 1010.0}\n' % os.getpid())
+                with patch("gpuwatch.training.status.time.time", return_value=1011.0):
+                    third = _parse_heartbeat(path, stale_after=5)
+                self.assertEqual(read_tail.call_count, 2)
+                self.assertEqual(third.epoch, 1)
+                self.assertEqual(third.state, "running")
 
     def test_heartbeat_marks_missing_pid_orphaned(self):
         with tempfile.TemporaryDirectory() as tmp:

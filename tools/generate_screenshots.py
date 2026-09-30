@@ -6,7 +6,7 @@ from pathlib import Path
 from rich.console import Console
 from rich.terminal_theme import TerminalTheme
 
-from gpuwatch.models import GpuProcessSnapshot, GpuSnapshot, HostSnapshot, SystemSnapshot
+from gpuwatch.models import GpuProcessSnapshot, GpuSnapshot, HostSnapshot, StorageSnapshot, SystemSnapshot
 from gpuwatch.render.rich_cli import render_dashboard
 from gpuwatch.training.status import TrainingStatus
 
@@ -186,6 +186,12 @@ def demo_snapshot() -> SystemSnapshot:
         memory_used_mb=23900,
         memory_total_mb=125600,
         cpu_temperature_c=58.0,
+        storage=StorageSnapshot(
+            mountpoint="/data",
+            used_bytes=3 * 1024**4 // 4,
+            total_bytes=1024**4,
+            free_bytes=1024**4 // 4,
+        ),
     )
     return SystemSnapshot(host=host, gpus=tuple(gpus), errors=(), backend="nvml")
 

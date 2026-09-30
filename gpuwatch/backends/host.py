@@ -3,11 +3,12 @@ from __future__ import annotations
 import os
 import socket
 import time
+from pathlib import Path
 from typing import Dict, Optional, Sequence, Tuple
 
 import psutil
 
-from gpuwatch.models import GpuProcessSnapshot, HostSnapshot
+from gpuwatch.models import GpuProcessSnapshot, HostSnapshot, StorageSnapshot
 
 # psutil's cpu_percent() measures the delta since the previous call on the same Process
 # object, so keep objects alive across samples or every reading is 0.0.
@@ -49,6 +50,7 @@ class HostBackend:
             memory_used_mb=int(memory.used // (1024 * 1024)),
             memory_total_mb=int(memory.total // (1024 * 1024)),
             cpu_temperature_c=_cpu_temperature(),
+            storage=collect_storage(os.getcwd()),
         )
 
     def enrich_process(
@@ -112,6 +114,31 @@ def _cpu_temperature() -> Optional[float]:
         if readings:
             return round(float(max(readings)), 1)
     return None
+
+
+def collect_storage(path: str) -> Optional[StorageSnapshot]:
+    """Read the filesystem containing a log, checkpoint, or project path."""
+    try:
+        requested = Path(path).expanduser().resolve()
+        directory = requested
+        while not directory.exists() and directory != directory.parent:
+            directory = directory.parent
+        if directory == directory.parent and requested != directory:
+            return None
+        if directory.is_file():
+            directory = directory.parent
+        usage = psutil.disk_usage(str(directory))
+        mountpoint = directory
+        while mountpoint != mountpoint.parent and not os.path.ismount(mountpoint):
+            mountpoint = mountpoint.parent
+        return StorageSnapshot(
+            mountpoint=str(mountpoint),
+            used_bytes=int(usage.used),
+            total_bytes=int(usage.total),
+            free_bytes=int(usage.free),
+        )
+    except (OSError, RuntimeError, ValueError):
+        return None
 
 
 def _cached_process(pid: int) -> psutil.Process:

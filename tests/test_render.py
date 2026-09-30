@@ -5,7 +5,7 @@ from dataclasses import replace
 from rich.cells import cell_len
 from rich.console import Console
 
-from gpuwatch.models import GpuProcessSnapshot
+from gpuwatch.models import GpuProcessSnapshot, StorageSnapshot
 from gpuwatch.render.rich_cli import THEMES, render_dashboard
 from gpuwatch.sampler import sample_once
 from gpuwatch.training.status import TrainingStatus
@@ -82,6 +82,20 @@ def mps_training_snapshot(run_count):
 
 
 class RenderTests(unittest.TestCase):
+    def test_storage_is_visualized_in_full_and_compact_in_small_view(self):
+        snapshot = snapshot_with_gpus(1)
+        storage = StorageSnapshot(
+            mountpoint="/data", total_bytes=1024**4, used_bytes=3 * 1024**4 // 4, free_bytes=1024**4 // 4
+        )
+        snapshot = replace(snapshot, host=replace(snapshot.host, storage=storage))
+
+        full = render_text(snapshot, width=160, height=40, display_mode="full")
+        narrow = render_text(snapshot, width=80, height=12, display_mode="micro")
+
+        self.assertIn("Disk /data [############----] 75% used | 256G free of 1.0T", full)
+        self.assertIn("Disk 256G free", narrow)
+        self.assertLessEqual(len(narrow.splitlines()), 12)
+
     def test_full_layout_summarizes_training_processes_instead_of_repeating_them(self):
         snapshot, statuses = mps_training_snapshot(12)
 

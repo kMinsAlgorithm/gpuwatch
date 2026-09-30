@@ -39,6 +39,8 @@ class CliTests(unittest.TestCase):
         self.assertEqual(payload["schema_version"], "0.3")
         self.assertEqual([gpu["index"] for gpu in payload["gpus"]], [1])
         self.assertIn("training", payload)
+        self.assertGreater(payload["host"]["storage"]["total_bytes"], 0)
+        self.assertIn("mountpoint", payload["host"]["storage"])
 
     def test_json_watch_includes_and_can_omit_training(self):
         result = self.run_cli("json", "--watch", "--limit", "1", "--backend", "fake")
@@ -57,6 +59,12 @@ class CliTests(unittest.TestCase):
             self.assertIn("eta_seconds", payload[0])
             self.assertIn("state_reason", payload[0])
             self.assertIn("dataset", payload[0])
+
+    def test_train_status_text_shows_storage_bar(self):
+        result = self.run_cli("train-status", "--backend", "fake")
+        self.assertIn("Disk ", result.stdout)
+        self.assertIn(" free of ", result.stdout)
+        self.assertIn("[", result.stdout.splitlines()[0])
 
     def test_tail_label_preserves_run_suffix(self):
         label = _tail_label("520caer_prt_v1_20260521_161037_zara2_gpu1", 24)

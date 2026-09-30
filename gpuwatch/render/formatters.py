@@ -25,6 +25,15 @@ def mb(value: Optional[float]) -> str:
     return f"{value:.0f}M"
 
 
+def bytes_size(value: int) -> str:
+    amount = float(value)
+    for suffix in ("B", "K", "M", "G", "T", "P"):
+        if amount < 1024 or suffix == "P":
+            return f"{amount:.1f}{suffix}" if amount < 10 and suffix != "B" else f"{amount:.0f}{suffix}"
+        amount /= 1024
+    return "N/A"
+
+
 def seconds(value: Optional[float]) -> str:
     if value is None:
         return "N/A"

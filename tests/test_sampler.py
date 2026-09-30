@@ -1,11 +1,14 @@
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from gpuwatch.backends.host import _cpu_temperature
 from gpuwatch.backends.nvidia_smi import NvidiaSmiUnavailable
 from gpuwatch.backends.nvml import NvmlUnavailable
-from gpuwatch.sampler import sample_once
+from gpuwatch.sampler import sample_once, with_training_storage
+from gpuwatch.training.status import TrainingStatus
 
 
 def _sensor(label, current):
@@ -13,6 +16,37 @@ def _sensor(label, current):
 
 
 class SamplerTests(unittest.TestCase):
+    def test_storage_prefers_checkpoint_volume_over_log_volume(self):
+        snapshot = sample_once(backend="fake")
+        with TemporaryDirectory() as tmp:
+            project = Path(tmp)
+            (project / "logs").mkdir()
+            (project / "checkpoints").mkdir()
+
+            def disk_usage(path):
+                free = 5 if "checkpoints" in path else 50
+                return SimpleNamespace(total=100, used=100 - free, free=free)
+
+            status = TrainingStatus(
+                project=str(project),
+                checkpoint_path="checkpoints/model.pt",
+                log_path=str(project / "logs" / "train.log"),
+            )
+            with patch("gpuwatch.backends.host.psutil.disk_usage", side_effect=disk_usage):
+                selected = with_training_storage(snapshot, [status], [str(project)])
+            self.assertEqual(selected.host.storage.free_bytes, 5)
+            self.assertEqual(selected.host.storage.used_percent, 95.0)
+
+    def test_missing_checkpoint_volume_falls_back_to_project_root(self):
+        snapshot = sample_once(backend="fake")
+        with TemporaryDirectory() as tmp:
+            status = TrainingStatus(checkpoint_path="/__gpuwatch_missing_volume__/model.pt")
+            usage = SimpleNamespace(total=100, used=70, free=30)
+            with patch("gpuwatch.backends.host.psutil.disk_usage", return_value=usage) as read_usage:
+                selected = with_training_storage(snapshot, [status], [tmp])
+            read_usage.assert_called_once_with(tmp)
+            self.assertEqual(selected.host.storage.free_bytes, 30)
+
     def test_cpu_temperature_prefers_intel_package_sensor(self):
         sensors = {
             "nvme": [_sensor("Composite", 48.9)],

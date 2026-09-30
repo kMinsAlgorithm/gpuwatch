@@ -4,7 +4,7 @@ import json
 import os
 import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -42,6 +42,7 @@ MATCH_TOKEN_STOPWORDS = {
 }
 _LOG_CACHE: Dict[Tuple[Tuple[str, ...], int, float], Tuple[float, List["TrainingStatus"]]] = {}
 _LOG_CACHE_TTL_SECONDS = 15.0
+_HEARTBEAT_CACHE: Dict[Path, Tuple[tuple, "TrainingStatus"]] = {}
 _PROJECT_MARKER_FILES = (
     ".git",
     "pyproject.toml",
@@ -428,6 +429,12 @@ def _heartbeat_files() -> List[Path]:
 
 
 def _parse_heartbeat(path: Path, stale_after: float = 900.0) -> TrainingStatus:
+    file_stat = path.stat()
+    signature = (file_stat.st_dev, file_stat.st_ino, file_stat.st_size, file_stat.st_mtime_ns, file_stat.st_ctime_ns)
+    cached = _HEARTBEAT_CACHE.get(path)
+    if cached is not None and cached[0] == signature:
+        # Old run files rarely change, but their age and process state still do.
+        return _refresh_heartbeat_status(cached[1], stale_after)
     records = []
     start = {}
     for line in _tail_text(path).splitlines():
@@ -483,7 +490,7 @@ def _parse_heartbeat(path: Path, stale_after: float = 900.0) -> TrainingStatus:
         _metadata_value(latest, "dataset"),
         _metadata_value(start, "dataset"),
     )
-    return TrainingStatus(
+    status = TrainingStatus(
         pid=pid,
         gpu_index=_optional_int(
             _first_present(
@@ -527,6 +534,27 @@ def _parse_heartbeat(path: Path, stale_after: float = 900.0) -> TrainingStatus:
         evidence=("heartbeat",),
         events_path=str(path),
     )
+    updated = path.stat()
+    if (updated.st_dev, updated.st_ino, updated.st_size, updated.st_mtime_ns, updated.st_ctime_ns) == signature:
+        if len(_HEARTBEAT_CACHE) >= 512:
+            _HEARTBEAT_CACHE.clear()
+        _HEARTBEAT_CACHE[path] = (signature, status)
+    return status
+
+
+def _refresh_heartbeat_status(status: TrainingStatus, stale_after: float) -> TrainingStatus:
+    age = max(0.0, time.time() - status.last_update_time) if status.last_update_time is not None else 0.0
+    state = "running"
+    reason = "recent_heartbeat"
+    if status.phase == "complete":
+        state, reason = "complete", "run_end_complete"
+    elif status.phase == "failed":
+        state, reason = "failed", "run_end_failed"
+    elif age > stale_after:
+        state, reason = "stalled", "heartbeat_stale"
+    if status.pid is not None and status.phase not in ("complete", "failed") and not _pid_exists(status.pid):
+        state, reason = "orphaned", "pid_missing"
+    return replace(status, age_seconds=age, stale_seconds=age, state=state, state_reason=reason)
 
 
 def _attach_process(

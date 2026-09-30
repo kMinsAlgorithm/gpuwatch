@@ -17,12 +17,16 @@ tables. The default theme is `soft-dark`.
 
 - NVIDIA GPU sampling through NVML with a fake backend for local UI development.
 - Per-GPU utilization, VRAM, temperature, fan, power, PID, and process information.
-- Host CPU, RAM, and load average summary.
+- Host CPU, RAM, load average, and storage usage summary.
 - Responsive Rich/Textual UI with `soft-dark`, `terminal`, and `light` themes.
 - ASCII fallback for terminals that do not render Unicode box characters well.
 - Training progress detection from `TrainingRun` heartbeat files, recent `.log` files, and
   project roots inferred from active GPU process working directories.
 - JSON output for scripting and dashboards.
+
+Storage follows the checkpoint path of a displayed training run when available, then its
+log path, an explicit `--root`, or a GPU process working directory. It falls back to the
+current directory. Free space at 15% or less is highlighted, with a stronger warning at 5%.
 
 ## Repository Layout
 
@@ -175,10 +179,12 @@ gpuwatch json --watch --limit 1 --no-training
 
 JSON output includes `schema_version: "0.3"` and training statuses by default. Use
 `--no-training` for a pure GPU snapshot stream.
+The host snapshot includes the selected storage volume and its used, free, and total bytes.
 
 ### `gpuwatch train-status`
 
 Scans training heartbeats and recent logs.
+The text view shows a storage bar and free space for the checkpoint or log volume.
 
 ```bash
 gpuwatch train-status --root PATH [--backend auto|fake] [--json] [--watch] [--interval 0.25] [--stale-after 120] [--failed-only] [--run TEXT] [--dataset TEXT] [--explain]
